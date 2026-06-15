@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -30,12 +31,6 @@ type Config struct {
 	// document ids from CouchPassphrase instead of using the plaintext path.
 	CouchPassphrase    string // COUCHDB_PASSPHRASE
 	UsePathObfuscation bool   // USE_PATH_OBFUSCATION
-
-	// HandleFilenameCaseSensitive must match the vault's handleFilenameCaseSensitive
-	// setting (HANDLE_FILENAME_CASE_SENSITIVE). LiveSync defaults it off, lowercasing
-	// document ids; set true only for a case-sensitive vault, or conflict lookups
-	// derive the wrong id.
-	HandleFilenameCaseSensitive bool // HANDLE_FILENAME_CASE_SENSITIVE
 }
 
 func env(key, def string) string {
@@ -80,19 +75,23 @@ func Load() (Config, error) {
 	c.CouchPassword = os.Getenv("COUCHDB_PASSWORD")
 	c.CouchDBName = os.Getenv("COUCHDB_DBNAME")
 	c.CouchPassphrase = os.Getenv("COUCHDB_PASSPHRASE")
+	// COUCHDB_PASSPHRASE_B64 carries the passphrase base64-encoded (standard,
+	// padded), for passphrases that are awkward to express as a raw env var. When
+	// set it is decoded and overrides COUCHDB_PASSPHRASE; the decoded bytes must
+	// match the vault's passphrase verbatim (LiveSync hashes them as-is).
+	if v := os.Getenv("COUCHDB_PASSPHRASE_B64"); v != "" {
+		decoded, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("COUCHDB_PASSPHRASE_B64 must be valid base64: %w", err)
+		}
+		c.CouchPassphrase = string(decoded)
+	}
 	if v := os.Getenv("USE_PATH_OBFUSCATION"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
 			return Config{}, fmt.Errorf("USE_PATH_OBFUSCATION must be a boolean: %w", err)
 		}
 		c.UsePathObfuscation = b
-	}
-	if v := os.Getenv("HANDLE_FILENAME_CASE_SENSITIVE"); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("HANDLE_FILENAME_CASE_SENSITIVE must be a boolean: %w", err)
-		}
-		c.HandleFilenameCaseSensitive = b
 	}
 	// Obfuscation derives the document id from the passphrase; without it conflict
 	// lookups would silently fall back to plaintext-path ids on an obfuscated
@@ -103,14 +102,14 @@ func Load() (Config, error) {
 	return c, nil
 }
 
-// ConflictIDParams maps the vault settings to the arguments couch.New needs for
-// document-id derivation: the obfuscation passphrase (empty unless path
-// obfuscation is on) and whether ids are case-insensitive (the inverse of
-// handleFilenameCaseSensitive). Kept here, and tested, so the wiring isn't an
-// untested seam in main.
-func (c Config) ConflictIDParams() (obfuscatePassphrase string, caseInsensitive bool) {
+// ObfuscationPassphrase is the passphrase couch.New needs to derive obfuscated
+// document ids: the vault passphrase when path obfuscation is on, empty
+// otherwise. Gating it here (and testing it) keeps the wiring out of an untested
+// seam in main, and ensures an E2EE-only vault (passphrase set, obfuscation off)
+// still uses plaintext-path ids.
+func (c Config) ObfuscationPassphrase() string {
 	if c.UsePathObfuscation {
-		obfuscatePassphrase = c.CouchPassphrase
+		return c.CouchPassphrase
 	}
-	return obfuscatePassphrase, !c.HandleFilenameCaseSensitive
+	return ""
 }

@@ -67,7 +67,6 @@ MCP_API_KEY=secret \
 | `COUCHDB_URI` / `COUCHDB_USER` / `COUCHDB_PASSWORD` / `COUCHDB_DBNAME` | no | — | Enable conflict detection (the Docker image sets these) |
 | `COUCHDB_PASSPHRASE` | no | _(empty)_ | E2EE passphrase; must match the vault |
 | `USE_PATH_OBFUSCATION` | no | `false` | Must match the vault's "Use path obfuscation" setting (see below); requires `COUCHDB_PASSPHRASE` |
-| `HANDLE_FILENAME_CASE_SENSITIVE` | no | `false` | Must match the vault's setting of the same name; affects conflict-lookup doc ids |
 
 ## MCP tools
 
@@ -102,9 +101,10 @@ absolute paths, `..` traversal, and symlinks escaping the vault are rejected.
   `conflicts: []` as safe only when `conflictCheck` is `ok`. On a path-obfuscated
   vault, set `USE_PATH_OBFUSCATION=true` + `COUCHDB_PASSPHRASE` and it works as
   normal (the server derives the obfuscated doc id from the passphrase). Caveat: a
-  wrong passphrase (or mismatched `HANDLE_FILENAME_CASE_SENSITIVE`) on an obfuscated
-  vault derives a non-existent id → false `conflictCheck: ok`; both must match the
-  vault. Empty passphrase with obfuscation on is rejected at startup.
+  wrong passphrase on an obfuscated vault derives a non-existent id → false
+  `conflictCheck: ok`; it must match the vault. Empty passphrase with obfuscation
+  on is rejected at startup. (Case-sensitive vaults aren't supported — the bundled
+  livesync-cli cannot sync them — so ids are always lowercased.)
 
 ## Verify
 

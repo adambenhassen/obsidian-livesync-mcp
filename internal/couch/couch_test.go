@@ -16,13 +16,13 @@ func writeBody(t *testing.T, w http.ResponseWriter, body string) {
 }
 
 func TestNewDisabledWhenIncomplete(t *testing.T) {
-	if New("", "u", "p", "db", "", true) != nil {
+	if New("", "u", "p", "db", "") != nil {
 		t.Error("New with empty uri should return nil")
 	}
-	if New("http://x", "u", "p", "", "", true) != nil {
+	if New("http://x", "u", "p", "", "") != nil {
 		t.Error("New with empty db should return nil")
 	}
-	if New("http://x", "u", "p", "db", "", true) == nil {
+	if New("http://x", "u", "p", "db", "") == nil {
 		t.Error("New with uri+db should return a client")
 	}
 }
@@ -36,7 +36,7 @@ func TestConflictsParsesAndLowercasesPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "admin", "secret", "livesync", "", true)
+	c := New(srv.URL, "admin", "secret", "livesync", "")
 	got, err := c.Conflicts(t.Context(), "Daily/Note.md")
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +64,7 @@ func TestConflictsObfuscatedID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "", "", "db", "hunter2", true)
+	c := New(srv.URL, "", "", "db", "hunter2")
 	got, err := c.Conflicts(t.Context(), "Projects/Plan B.md")
 	if err != nil {
 		t.Fatal(err)
@@ -78,30 +78,24 @@ func TestConflictsObfuscatedID(t *testing.T) {
 	}
 }
 
-// TestDocID pins the path→id derivation directly, including the case-sensitivity
-// switch. Obfuscated golden ids were computed independently from LiveSync's
-// algorithm. handleFilenameCaseSensitive=true (caseInsensitive=false) must NOT
-// lowercase, or the derived id won't match what such a vault stores.
+// TestDocID pins the path→id derivation directly. Ids are always lowercased.
+// The obfuscated golden id was computed independently from LiveSync's algorithm.
 func TestDocID(t *testing.T) {
 	const passphrase = "hunter2"
 	tests := []struct {
 		name                string
 		notePath            string
 		obfuscatePassphrase string
-		caseInsensitive     bool
 		want                string
 	}{
-		{"plaintext lowercased", "Note-One.md", "", true, "note-one.md"},
-		{"plaintext case-sensitive", "Note-One.md", "", false, "Note-One.md"},
-		{"plaintext slash escaped", "Daily/Note.md", "", true, "daily%2Fnote.md"},
-		{"obfuscated lowercased", "Note-One.md", passphrase, true,
+		{"plaintext lowercased", "Note-One.md", "", "note-one.md"},
+		{"plaintext slash escaped", "Daily/Note.md", "", "daily%2Fnote.md"},
+		{"obfuscated lowercased", "Note-One.md", passphrase,
 			"f:9b3202d1fc2cf3b6482c836f9d5fbddc227488f1d10193cee62ca8a23ef4327a"},
-		{"obfuscated case-sensitive", "Note-One.md", passphrase, false,
-			"f:8f912fab6a603e4438cdcfcac7b092b3aea87152198e70f959433a1556991738"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &Client{obfuscatePassphrase: tt.obfuscatePassphrase, caseInsensitive: tt.caseInsensitive}
+			c := &Client{obfuscatePassphrase: tt.obfuscatePassphrase}
 			if got := c.docID(tt.notePath); got != tt.want {
 				t.Errorf("docID(%q) = %q, want %q", tt.notePath, got, tt.want)
 			}
@@ -113,7 +107,7 @@ func TestDocID(t *testing.T) {
 // in both branches.
 func TestDocIDCleansPath(t *testing.T) {
 	for _, obf := range []string{"", "hunter2"} {
-		c := &Client{obfuscatePassphrase: obf, caseInsensitive: true}
+		c := &Client{obfuscatePassphrase: obf}
 		if got, want := c.docID("./Daily//Note.md"), c.docID("Daily/Note.md"); got != want {
 			t.Errorf("obfuscate=%q: docID did not canonicalize: %q != %q", obf, got, want)
 		}
@@ -126,7 +120,7 @@ func TestConflictsNoneWhenNull(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := New(srv.URL, "", "", "db", "", true).Conflicts(t.Context(), "x.md")
+	got, err := New(srv.URL, "", "", "db", "").Conflicts(t.Context(), "x.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +135,7 @@ func TestConflictsMissingDocIsNoConflict(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := New(srv.URL, "", "", "db", "", true).Conflicts(t.Context(), "nope.md")
+	got, err := New(srv.URL, "", "", "db", "").Conflicts(t.Context(), "nope.md")
 	if err != nil {
 		t.Fatalf("404 should not error: %v", err)
 	}
@@ -156,7 +150,7 @@ func TestConflictsServerErrorPropagates(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := New(srv.URL, "", "", "db", "", true).Conflicts(t.Context(), "x.md"); err == nil {
+	if _, err := New(srv.URL, "", "", "db", "").Conflicts(t.Context(), "x.md"); err == nil {
 		t.Error("expected error on HTTP 500")
 	}
 }
@@ -177,7 +171,7 @@ func TestConflictsMissingDatabaseErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := New(srv.URL, "", "", "wrongdb", "", true).Conflicts(t.Context(), "x.md"); err == nil {
+	if _, err := New(srv.URL, "", "", "wrongdb", "").Conflicts(t.Context(), "x.md"); err == nil {
 		t.Error("a missing database must surface an error, not look conflict-free")
 	}
 }
@@ -190,7 +184,7 @@ func TestConflictsMissingDocumentIsClean(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := New(srv.URL, "", "", "db", "", true).Conflicts(t.Context(), "x.md")
+	got, err := New(srv.URL, "", "", "db", "").Conflicts(t.Context(), "x.md")
 	if err != nil || got != nil {
 		t.Fatalf("missing doc = (%v, %v), want (nil, nil)", got, err)
 	}
@@ -206,7 +200,7 @@ func TestConflictsEscapesSpacesAndUnicode(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := New(srv.URL, "", "", "db", "", true).Conflicts(t.Context(), "Daily/Plan B é.md"); err != nil {
+	if _, err := New(srv.URL, "", "", "db", "").Conflicts(t.Context(), "Daily/Plan B é.md"); err != nil {
 		t.Fatal(err)
 	}
 	if want := "/db/daily%2Fplan%20b%20%C3%A9.md?conflicts=true"; gotURI != want {

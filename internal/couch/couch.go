@@ -45,10 +45,7 @@ type Client struct {
 	// obfuscatePassphrase mirrors LiveSync's obfuscatePassphrase: the passphrase
 	// when path obfuscation is enabled, empty otherwise. Empty = plaintext ids.
 	obfuscatePassphrase string
-	// caseInsensitive mirrors LiveSync's caseInsensitive (= !handleFilenameCaseSensitive):
-	// when true (the LiveSync default) paths are lowercased before id derivation.
-	caseInsensitive bool
-	hc              *http.Client
+	hc                  *http.Client
 }
 
 // New returns a Client, or nil if uri or db is empty (conflict detection
@@ -57,10 +54,8 @@ type Client struct {
 //
 // obfuscatePassphrase enables path-obfuscated id derivation when non-empty; it
 // must be the vault's passphrase and is only meaningful when the vault has
-// usePathObfuscation set. Pass "" for a non-obfuscated vault. caseInsensitive
-// must match the vault's id casing (true unless handleFilenameCaseSensitive is
-// set); LiveSync defaults it to true (paths lowercased).
-func New(uri, user, pass, db, obfuscatePassphrase string, caseInsensitive bool) *Client {
+// usePathObfuscation set. Pass "" for a non-obfuscated vault.
+func New(uri, user, pass, db, obfuscatePassphrase string) *Client {
 	if uri == "" || db == "" {
 		return nil
 	}
@@ -70,7 +65,6 @@ func New(uri, user, pass, db, obfuscatePassphrase string, caseInsensitive bool) 
 		pass:                pass,
 		db:                  db,
 		obfuscatePassphrase: obfuscatePassphrase,
-		caseInsensitive:     caseInsensitive,
 		hc:                  &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -136,8 +130,9 @@ const prefixObfuscated = "f:"
 // docID maps a vault path to the URL path segment for its CouchDB document.
 //
 // The path is cleaned (so ./x and sub//x map to the same doc the vault writes)
-// and, when caseInsensitive, lowercased — LiveSync lowercases ids unless
-// handleFilenameCaseSensitive is set, which defaults off.
+// and lowercased — LiveSync lowercases ids unless handleFilenameCaseSensitive is
+// set, which the server does not support (the bundled livesync-cli cannot sync
+// such a vault), so ids are always case-folded here.
 //
 //   - Plaintext (no obfuscation): the path, escaped as one segment (slashes as
 //     %2F; CouchDB decodes %20 and other percent-escapes back).
@@ -145,17 +140,13 @@ const prefixObfuscated = "f:"
 //     mirror of LiveSync's path2id_base. The result is ASCII hex after the "f:"
 //     prefix, so it needs no escaping.
 func (c *Client) docID(notePath string) string {
-	clean := path.Clean(notePath)
-	if c.caseInsensitive {
-		clean = strings.ToLower(clean)
-	}
+	lower := strings.ToLower(path.Clean(notePath))
 	if c.obfuscatePassphrase == "" {
-		return strings.ReplaceAll(url.PathEscape(clean), "/", "%2F")
+		return strings.ReplaceAll(url.PathEscape(lower), "/", "%2F")
 	}
-	// Only the path is case-folded; the passphrase is hashed verbatim (it is
-	// case-significant in LiveSync). Do not lowercase it.
+	// The passphrase is hashed verbatim (case-significant in LiveSync).
 	hashedPassphrase := sha256Hex(c.obfuscatePassphrase)
-	return prefixObfuscated + sha256Hex(hashedPassphrase+":"+clean)
+	return prefixObfuscated + sha256Hex(hashedPassphrase+":"+lower)
 }
 
 // sha256Hex returns the lowercase hex SHA-256 of s. This mirrors LiveSync's

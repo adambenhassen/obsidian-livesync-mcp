@@ -61,7 +61,6 @@ All configuration is via environment variables:
 | `COUCHDB_DBNAME` | no       | —                  | CouchDB database name |
 | `COUCHDB_PASSPHRASE` | no   | _(empty)_          | E2EE passphrase; empty disables encryption. Must match the vault |
 | `USE_PATH_OBFUSCATION` | no | `false`            | Must match the vault's "Use path obfuscation" setting (see below). Requires `COUCHDB_PASSPHRASE` |
-| `HANDLE_FILENAME_CASE_SENSITIVE` | no | `false`   | Must match the vault's setting of the same name; affects conflict-lookup doc ids |
 
 (The Docker image already passes the `COUCHDB_*` values, so conflict detection
 works out of the box there.)
@@ -174,11 +173,15 @@ to the vault's passphrase — the server then derives the obfuscated id and conf
 detection works as normal. (Plain E2EE encryption without path obfuscation leaves
 the id as the plaintext path, so it needs no extra configuration.)
 
-> **Caveat:** on an obfuscated vault, a *wrong* `COUCHDB_PASSPHRASE` (or a
-> mismatched `HANDLE_FILENAME_CASE_SENSITIVE`) derives a doc id that exists
-> nowhere, which looks identical to "no conflict" — every note then reports a
-> false `conflictCheck: "ok"`. Make sure both match the vault. An empty
-> passphrase with obfuscation on is rejected at startup.
+> **Caveat:** on an obfuscated vault, a *wrong* `COUCHDB_PASSPHRASE` derives a
+> doc id that exists nowhere, which looks identical to "no conflict" — every note
+> then reports a false `conflictCheck: "ok"`. Make sure it matches the vault. An
+> empty passphrase with obfuscation on is rejected at startup.
+>
+> **Case-sensitive vaults are unsupported:** the bundled `livesync-cli` cannot
+> sync a vault with `handleFilenameCaseSensitive` enabled (its mirror scan throws
+> `Handler isStorageInsensitive is not assigned` and syncs nothing), so document
+> ids are always lowercased here.
 
 ## Example MCP client config
 

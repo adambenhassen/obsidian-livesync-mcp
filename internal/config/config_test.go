@@ -87,6 +87,43 @@ func TestLoadPathObfuscation(t *testing.T) {
 	}
 }
 
+func TestLoadPassphraseB64(t *testing.T) {
+	t.Setenv("LIVESYNC_VAULT", "/tmp/vault")
+	t.Setenv("LIVESYNC_DB", "/tmp/db")
+	// base64("hunter2") == "aHVudGVyMg=="
+	t.Setenv("COUCHDB_PASSPHRASE_B64", "aHVudGVyMg==")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.CouchPassphrase != "hunter2" {
+		t.Errorf("CouchPassphrase = %q, want hunter2", c.CouchPassphrase)
+	}
+}
+
+func TestLoadPassphraseB64OverridesPlaintext(t *testing.T) {
+	t.Setenv("LIVESYNC_VAULT", "/tmp/vault")
+	t.Setenv("LIVESYNC_DB", "/tmp/db")
+	t.Setenv("COUCHDB_PASSPHRASE", "ignored")
+	t.Setenv("COUCHDB_PASSPHRASE_B64", "aHVudGVyMg==")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.CouchPassphrase != "hunter2" {
+		t.Errorf("CouchPassphrase = %q, want hunter2 (B64 overrides plaintext)", c.CouchPassphrase)
+	}
+}
+
+func TestLoadInvalidPassphraseB64Errors(t *testing.T) {
+	t.Setenv("LIVESYNC_VAULT", "/tmp/vault")
+	t.Setenv("LIVESYNC_DB", "/tmp/db")
+	t.Setenv("COUCHDB_PASSPHRASE_B64", "not!valid!base64!")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for invalid COUCHDB_PASSPHRASE_B64")
+	}
+}
+
 func TestLoadPathObfuscationDefaultsFalse(t *testing.T) {
 	t.Setenv("LIVESYNC_VAULT", "/tmp/vault")
 	t.Setenv("LIVESYNC_DB", "/tmp/db")
@@ -108,28 +145,6 @@ func TestLoadInvalidPathObfuscationErrors(t *testing.T) {
 	}
 }
 
-func TestLoadHandleFilenameCaseSensitive(t *testing.T) {
-	t.Setenv("LIVESYNC_VAULT", "/tmp/vault")
-	t.Setenv("LIVESYNC_DB", "/tmp/db")
-	t.Setenv("HANDLE_FILENAME_CASE_SENSITIVE", "true")
-	c, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if !c.HandleFilenameCaseSensitive {
-		t.Error("HandleFilenameCaseSensitive = false, want true")
-	}
-}
-
-func TestLoadInvalidHandleFilenameCaseSensitiveErrors(t *testing.T) {
-	t.Setenv("LIVESYNC_VAULT", "/tmp/vault")
-	t.Setenv("LIVESYNC_DB", "/tmp/db")
-	t.Setenv("HANDLE_FILENAME_CASE_SENSITIVE", "maybe")
-	if _, err := Load(); err == nil {
-		t.Fatal("expected error for non-boolean HANDLE_FILENAME_CASE_SENSITIVE")
-	}
-}
-
 // Obfuscation derives the doc id from the passphrase; an empty passphrase would
 // silently fall back to plaintext-path lookups and report every note as
 // conflict-free. Fail fast instead.
@@ -143,24 +158,20 @@ func TestLoadObfuscationRequiresPassphrase(t *testing.T) {
 	}
 }
 
-func TestConflictIDParams(t *testing.T) {
+func TestObfuscationPassphrase(t *testing.T) {
 	tests := []struct {
-		name                string
-		cfg                 Config
-		wantObfuscate       string
-		wantCaseInsensitive bool
+		name string
+		cfg  Config
+		want string
 	}{
-		{"default", Config{}, "", true},
-		{"obfuscation off ignores passphrase", Config{CouchPassphrase: "p"}, "", true},
-		{"obfuscation on uses passphrase", Config{UsePathObfuscation: true, CouchPassphrase: "p"}, "p", true},
-		{"case-sensitive vault", Config{HandleFilenameCaseSensitive: true}, "", false},
+		{"default", Config{}, ""},
+		{"obfuscation off ignores passphrase", Config{CouchPassphrase: "p"}, ""},
+		{"obfuscation on uses passphrase", Config{UsePathObfuscation: true, CouchPassphrase: "p"}, "p"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotObfuscate, gotCaseInsensitive := tt.cfg.ConflictIDParams()
-			if gotObfuscate != tt.wantObfuscate || gotCaseInsensitive != tt.wantCaseInsensitive {
-				t.Errorf("ConflictIDParams() = (%q, %v), want (%q, %v)",
-					gotObfuscate, gotCaseInsensitive, tt.wantObfuscate, tt.wantCaseInsensitive)
+			if got := tt.cfg.ObfuscationPassphrase(); got != tt.want {
+				t.Errorf("ObfuscationPassphrase() = %q, want %q", got, tt.want)
 			}
 		})
 	}

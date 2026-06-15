@@ -416,7 +416,7 @@ func TestObfuscatedConflictDetection(t *testing.T) {
 
 	// Production path: ask by PLAINTEXT path; the client must derive the same id
 	// and surface the conflict.
-	client := couch.New(cc.base, cc.user, cc.pass, db, passphrase, true)
+	client := couch.New(cc.base, cc.user, cc.pass, db, passphrase)
 	conflicts, err := client.Conflicts(t.Context(), name)
 	if err != nil {
 		t.Fatalf("Conflicts: %v", err)
