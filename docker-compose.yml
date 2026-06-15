@@ -56,6 +56,9 @@ services:
       COUCHDB_DBNAME: livesync
       # End-to-end encryption passphrase (empty disables E2EE).
       COUCHDB_PASSPHRASE: ""
+      # Must match the vault's "Use path obfuscation" setting. Wrong value
+      # against an obfuscated vault syncs 0-byte files instead of content.
+      USE_PATH_OBFUSCATION: "false"
       LIVESYNC_VAULT: /vault
       LIVESYNC_DB: /db
       # Daemon CouchDB poll interval (seconds) — drives bidirectional sync.

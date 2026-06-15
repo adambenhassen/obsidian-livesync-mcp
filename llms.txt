@@ -65,6 +65,8 @@ MCP_API_KEY=secret \
 | `MCP_API_KEY`      | no       | _(empty)_        | Bearer token; empty disables auth |
 | `READ_ONLY`        | no       | `false`          | When `true`, only read tools are exposed (no write/append/delete/move) |
 | `COUCHDB_URI` / `COUCHDB_USER` / `COUCHDB_PASSWORD` / `COUCHDB_DBNAME` | no | — | Enable conflict detection (the Docker image sets these) |
+| `COUCHDB_PASSPHRASE` | no | _(empty)_ | E2EE passphrase; must match the vault |
+| `USE_PATH_OBFUSCATION` | no | `false` | Must match the vault's "Use path obfuscation" setting (see below) |
 
 ## MCP tools
 
@@ -88,6 +90,10 @@ absolute paths, `..` traversal, and symlinks escaping the vault are rejected.
   `test/integration_test.go`.
 - Deletes propagate as LiveSync **soft-delete tombstones** (the CouchDB doc body
   gains `"deleted": true`; the doc is not removed via CouchDB native `_deleted`).
+- **Path obfuscation:** if the vault was created with Obsidian's "Use path
+  obfuscation" enabled, set `USE_PATH_OBFUSCATION=true` (and `COUCHDB_PASSPHRASE`
+  to match its E2EE passphrase). A mismatch syncs **0-byte files** — the daemon
+  reports success but cannot resolve content chunks, so `read_note` returns "".
 - **Conflicts:** with `COUCHDB_*` set, `get_note_metadata` returns a `conflicts`
   array and `write_note`/`append_to_note` refuse to edit a conflicted note. Check
   `get_note_metadata` before editing a note you didn't just create. Only works

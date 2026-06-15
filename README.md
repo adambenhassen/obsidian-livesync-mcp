@@ -59,9 +59,20 @@ All configuration is via environment variables:
 | `COUCHDB_USER`   | no       | —                  | CouchDB user for conflict queries |
 | `COUCHDB_PASSWORD`| no      | —                  | CouchDB password for conflict queries |
 | `COUCHDB_DBNAME` | no       | —                  | CouchDB database name |
+| `COUCHDB_PASSPHRASE` | no   | _(empty)_          | E2EE passphrase; empty disables encryption. Must match the vault |
+| `USE_PATH_OBFUSCATION` | no | `false`            | Must match the vault's "Use path obfuscation" setting (see below) |
 
 (The Docker image already passes the `COUCHDB_*` values, so conflict detection
 works out of the box there.)
+
+### Path obfuscation
+
+If the vault was created in Obsidian with **Settings → "Use path obfuscation"**
+enabled, set `USE_PATH_OBFUSCATION=true`. The value must match what the vault was
+created with. If it doesn't, the daemon still reports a successful sync but writes
+every note as a **0-byte file** (it can list paths but cannot resolve the content
+chunks), and `read_note` returns empty strings. Likewise, an E2EE vault needs
+`COUCHDB_PASSPHRASE` set to the same passphrase used to create it.
 
 ### Read-only mode
 

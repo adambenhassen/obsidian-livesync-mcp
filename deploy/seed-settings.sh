@@ -3,7 +3,8 @@
 # idempotently. Shared by the runtime entrypoint and the e2e test runner.
 #
 # Reads: LIVESYNC_DB, COUCHDB_URI, COUCHDB_USER, COUCHDB_PASSWORD,
-#        COUCHDB_DBNAME, COUCHDB_PASSPHRASE (optional E2EE).
+#        COUCHDB_DBNAME, COUCHDB_PASSPHRASE (optional E2EE),
+#        USE_PATH_OBFUSCATION (must match the vault's setting).
 set -e
 
 DB_DIR="${LIVESYNC_DB:-/db}"
@@ -43,6 +44,7 @@ if [ "$NEEDS_SEED" = "1" ]; then
     COUCHDB_PASSWORD="${COUCHDB_PASSWORD:-}" \
     COUCHDB_DBNAME="${COUCHDB_DBNAME:-}" \
     COUCHDB_PASSPHRASE="${COUCHDB_PASSPHRASE:-}" \
+    USE_PATH_OBFUSCATION="${USE_PATH_OBFUSCATION:-}" \
     node <<'NODE'
 const fs = require("node:fs");
 const p = process.env.SETTINGS_FILE;
@@ -55,6 +57,10 @@ data.remoteType = "";
 const pass = process.env.COUCHDB_PASSPHRASE || "";
 data.encrypt = pass !== "";
 data.passphrase = pass;
+// Must match the value used when the vault was created. Mismatched against an
+// obfuscated vault, the daemon syncs but writes 0-byte files (cannot resolve
+// content chunks). Default false preserves the init-settings default.
+data.usePathObfuscation = process.env.USE_PATH_OBFUSCATION === "true";
 data.isConfigured = true;
 fs.writeFileSync(p, JSON.stringify(data, null, 2), "utf-8");
 console.error(`[seed] configured ${data.couchDB_URI} db=${data.couchDB_DBNAME}`);
