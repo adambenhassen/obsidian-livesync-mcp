@@ -11,20 +11,22 @@ DB_DIR="${LIVESYNC_DB:-/db}"
 SETTINGS_FILE="$DB_DIR/.livesync/settings.json"
 mkdir -p "$DB_DIR/.livesync"
 
-# Resolve the effective E2EE passphrase. COUCHDB_PASSPHRASE_B64 carries the
-# passphrase base64-encoded (standard, padded); when set it is decoded and
-# OVERRIDES COUCHDB_PASSPHRASE. This mirrors internal/config/config.go so the
-# daemon seed and the Go server derive the same passphrase. Invalid base64 is
-# fatal — silently falling back to an empty passphrase would make the daemon
-# write every note as a 0-byte file.
-EFFECTIVE_PASSPHRASE="${COUCHDB_PASSPHRASE:-}"
+# Validate COUCHDB_PASSPHRASE_B64 up front (fail fast). The actual decode happens
+# in the E2EE block below, in Node, so it matches internal/config/config.go's
+# byte-exact base64.StdEncoding semantics: a shell "$(... | base64 -d)" capture
+# would strip trailing newlines, and GNU base64 -d silently accepts non-canonical
+# input (whitespace, missing padding) that StdEncoding rejects — either way the
+# daemon and the Go server could derive different passphrases. The canonical
+# round-trip check below accepts exactly the inputs StdEncoding accepts.
 if [ -n "${COUCHDB_PASSPHRASE_B64:-}" ]; then
-    if ! EFFECTIVE_PASSPHRASE=$(printf %s "$COUCHDB_PASSPHRASE_B64" | base64 -d 2>/dev/null); then
-        echo "[seed] COUCHDB_PASSPHRASE_B64 must be valid base64" >&2
+    if ! COUCHDB_PASSPHRASE_B64="$COUCHDB_PASSPHRASE_B64" node -e '
+const b64 = process.env.COUCHDB_PASSPHRASE_B64;
+if (Buffer.from(b64, "base64").toString("base64") !== b64) process.exit(1);
+'; then
+        echo "[seed] COUCHDB_PASSPHRASE_B64 must be valid standard (padded) base64" >&2
         exit 1
     fi
 fi
-export EFFECTIVE_PASSPHRASE
 
 if [ ! -f "$SETTINGS_FILE" ]; then
     echo "[seed] generating settings -> $SETTINGS_FILE"
@@ -77,22 +79,37 @@ fi
 # connection-seed gate above. LiveSync's sls+ startup migration drops the
 # top-level `passphrase` from settings.json after the first run, so seeding it
 # only once would leave every restart with no passphrase — and the daemon would
-# then write each note as a 0-byte file. Must run after the connection seed and
-# before the daemon starts.
+# then write each note as a 0-byte file. The passphrase is decoded here (not in
+# the shell) so trailing bytes survive and the result matches config.go. Must run
+# after the connection seed and before the daemon starts.
 SETTINGS_FILE="$SETTINGS_FILE" \
-EFFECTIVE_PASSPHRASE="$EFFECTIVE_PASSPHRASE" \
+COUCHDB_PASSPHRASE="${COUCHDB_PASSPHRASE:-}" \
+COUCHDB_PASSPHRASE_B64="${COUCHDB_PASSPHRASE_B64:-}" \
 USE_PATH_OBFUSCATION="${USE_PATH_OBFUSCATION:-}" \
 node <<'NODE'
 const fs = require("node:fs");
 const p = process.env.SETTINGS_FILE;
 const data = JSON.parse(fs.readFileSync(p, "utf-8"));
-const pass = process.env.EFFECTIVE_PASSPHRASE || "";
+// COUCHDB_PASSPHRASE_B64 (standard padded base64) overrides COUCHDB_PASSPHRASE,
+// decoded byte-for-byte to mirror internal/config/config.go.
+const b64 = process.env.COUCHDB_PASSPHRASE_B64 || "";
+const pass = b64 !== ""
+  ? Buffer.from(b64, "base64").toString("utf8")
+  : (process.env.COUCHDB_PASSPHRASE || "");
+const obfuscate = process.env.USE_PATH_OBFUSCATION === "true";
+// Mirror config.go's fail-fast: obfuscation derives the document id from the
+// passphrase, so an empty one would silently produce 0-byte files / false
+// conflict all-clears on an obfuscated vault.
+if (obfuscate && pass === "") {
+  console.error("[seed] USE_PATH_OBFUSCATION=true requires COUCHDB_PASSPHRASE or COUCHDB_PASSPHRASE_B64");
+  process.exit(1);
+}
 data.encrypt = pass !== "";
 data.passphrase = pass;
 // Must match the value used when the vault was created. Mismatched against an
 // obfuscated vault, the daemon syncs but writes 0-byte files (cannot resolve
 // content chunks). Default false preserves the init-settings default.
-data.usePathObfuscation = process.env.USE_PATH_OBFUSCATION === "true";
+data.usePathObfuscation = obfuscate;
 fs.writeFileSync(p, JSON.stringify(data, null, 2), "utf-8");
 console.error(`[seed] e2ee re-asserted (encrypt=${data.encrypt} usePathObfuscation=${data.usePathObfuscation})`);
 NODE
