@@ -84,3 +84,47 @@ func (v *Vault) Write(rel, content string, overwrite bool) error {
 	}
 	return os.WriteFile(abs, []byte(content), 0o644)
 }
+
+// Append appends content to a note, creating it (and parents) if absent.
+func (v *Vault) Append(rel, content string) error {
+	abs, err := v.resolve(rel)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(content)
+	return err
+}
+
+// Delete removes a note. Deletion propagates to CouchDB via the daemon's
+// filesystem watcher (verified by the integration test).
+func (v *Vault) Delete(rel string) error {
+	abs, err := v.resolve(rel)
+	if err != nil {
+		return err
+	}
+	return os.Remove(abs)
+}
+
+// Move relocates a note, creating destination parents as needed.
+func (v *Vault) Move(from, to string) error {
+	src, err := v.resolve(from)
+	if err != nil {
+		return err
+	}
+	dst, err := v.resolve(to)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	return os.Rename(src, dst)
+}
