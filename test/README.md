@@ -24,7 +24,7 @@ docker compose --profile test run --rm e2e-test
 ```
 
 That one command brings up CouchDB, initialises the databases, seeds an isolated
-db dir, then runs `go test -tags integration ./test/... -run Roundtrip -v`
+db dir, then runs the whole gated suite (`go test -tags integration ./test/... -v`)
 against the real CouchDB. Expected: `PASS`.
 
 The `e2e-test` service uses its own db volume, so it never contends with a
@@ -48,8 +48,10 @@ LIVESYNC_CLI=/path/to/livesync-cli \
 LIVESYNC_DB=/path/to/db \
 COUCHDB_URL=http://localhost:5984 \
 COUCHDB_USER=admin COUCHDB_PASSWORD=password COUCHDB_DBNAME=livesync \
-  go test -tags integration ./test/ -run Roundtrip -v
+  go test -tags integration ./test/... -v
 ```
+
+(To run a single test, add `-run TestExistingRemoteDataIsPreserved`.)
 
 Expected: PASS. Without `LIVESYNC_IT=1`, the test SKIPs.
 
