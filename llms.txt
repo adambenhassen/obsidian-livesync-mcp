@@ -29,6 +29,11 @@ curl -s -H "Authorization: Bearer changeme" http://localhost:8765/healthz   # ex
 - Auth: `Authorization: Bearer changeme` — change `MCP_API_KEY` in `docker-compose.yml`.
 - CouchDB credentials/db are set in `docker-compose.yml` (`admin`/`password`, db `livesync`).
 
+A prebuilt server image is published per release tag:
+`ghcr.io/adambenhassen/obsidian-livesync-mcp:latest` (`docker pull` it and bring
+your own CouchDB + seeded db dir, or set it as the `image:` on the
+`livesync-mcp` compose service to skip building `livesync-cli` from source).
+
 ## Install & run — local (advanced)
 
 1. Build `livesync-cli` from https://github.com/vrtmrz/obsidian-livesync:
