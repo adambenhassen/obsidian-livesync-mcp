@@ -8,29 +8,21 @@ build tag and the `LIVESYNC_IT=1` env var, so it never runs during `go test ./..
 ## Easiest path — Docker Compose
 
 The repo ships a full stack (`docker-compose.yml`): CouchDB, a one-shot
-initialiser, and the `livesync-mcp` image (which bundles a from-source
-`livesync-cli`).
+initialiser, and a dedicated `e2e-test` service (under the `test` profile) that
+bundles the Go toolchain + a from-source `livesync-cli` and runs this test.
 
 ```bash
-# Bring up CouchDB + initialise the databases.
-docker compose up -d couchdb couchdb-init
-
-# Run the integration test against that CouchDB, using the livesync-cli built
-# into the image. (Builds the image on first run.)
-docker compose run --rm --entrypoint "" \
-  -e LIVESYNC_IT=1 \
-  -e LIVESYNC_CLI=livesync-cli \
-  -e LIVESYNC_DB=/db \
-  -e COUCHDB_URL=http://couchdb:5984 \
-  -e COUCHDB_USER=admin -e COUCHDB_PASSWORD=password -e COUCHDB_DBNAME=livesync \
-  livesync-mcp sh -c '/usr/local/bin/entrypoint.sh & sleep 4; \
-    cd /src && go test -tags integration ./test/ -run Roundtrip -v'
+docker compose --profile test run --rm e2e-test
 ```
 
-> The `entrypoint.sh &` seeds `/db/.livesync/settings.json` before the test
-> starts its own daemon against the same configured db dir.
+That one command brings up CouchDB, initialises the databases, seeds an isolated
+db dir, then runs `go test -tags integration ./test/... -run Roundtrip -v`
+against the real CouchDB. Expected: `PASS`.
 
-Tear down with `docker compose down -v`.
+The `e2e-test` service uses its own db volume, so it never contends with a
+running `livesync-mcp` for the single-process database.
+
+Tear down with `docker compose --profile test down -v`.
 
 ## Manual path — your own CLI + CouchDB
 

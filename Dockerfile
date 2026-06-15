@@ -60,8 +60,9 @@ COPY --from=cli-builder /src/src/apps/cli/dist ./dist
 # bundle (no database-path injection — the Go supervisor passes it explicitly).
 COPY deploy/livesync-cli /usr/local/bin/livesync-cli
 COPY --from=go-builder /livesync-mcp /usr/local/bin/livesync-mcp
+COPY deploy/seed-settings.sh /usr/local/bin/seed-settings.sh
 COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/livesync-cli /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/livesync-cli /usr/local/bin/seed-settings.sh /usr/local/bin/entrypoint.sh
 
 ENV LIVESYNC_CLI=livesync-cli \
     LIVESYNC_VAULT=/vault \
@@ -71,3 +72,34 @@ ENV LIVESYNC_CLI=livesync-cli \
 EXPOSE 8765
 VOLUME ["/vault", "/db"]
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Stage 4 — e2e test runner (Go toolchain + Node CLI + source)
+#  Runs the gated integration test (test/integration_test.go) against a real
+#  CouchDB. Build with `--target e2e`; driven by the compose `e2e-test` service.
+# ─────────────────────────────────────────────────────────────────────────────
+FROM node:22-slim AS e2e
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=golang:1.26 /usr/local/go /usr/local/go
+# Reuse the module cache already populated by go-builder (offline; GOPROXY=off).
+COPY --from=go-builder /go/pkg/mod /go/pkg/mod
+ENV PATH=/usr/local/go/bin:/usr/local/bin:$PATH \
+    GOPATH=/go \
+    GOPROXY=off \
+    GOFLAGS=-mod=mod \
+    GOCACHE=/tmp/gocache \
+    LIVESYNC_CLI=livesync-cli
+WORKDIR /app
+# livesync-cli bundle + runtime deps + launcher
+COPY --from=cli-builder /deps/node_modules ./node_modules
+COPY --from=cli-builder /src/src/apps/cli/dist ./dist
+COPY deploy/livesync-cli /usr/local/bin/livesync-cli
+COPY deploy/seed-settings.sh /usr/local/bin/seed-settings.sh
+COPY deploy/run-e2e.sh /usr/local/bin/run-e2e.sh
+RUN chmod +x /usr/local/bin/livesync-cli /usr/local/bin/seed-settings.sh /usr/local/bin/run-e2e.sh
+# Go module + source
+COPY go.mod go.sum ./
+COPY . .
+ENTRYPOINT ["/usr/local/bin/run-e2e.sh"]

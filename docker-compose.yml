@@ -67,7 +67,33 @@ services:
       - vault-data:/vault
       - db-data:/db
 
+  # Gated Go integration test (build tag `integration`). Runs only under the
+  # `test` profile: `docker compose --profile test run --rm e2e-test`.
+  # Uses its own db volume so it never contends with livesync-mcp for the
+  # single-process database.
+  e2e-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: e2e
+    profiles: ["test"]
+    depends_on:
+      couchdb-init:
+        condition: service_completed_successfully
+    environment:
+      LIVESYNC_IT: "1"
+      LIVESYNC_CLI: livesync-cli
+      LIVESYNC_DB: /db
+      COUCHDB_URI: http://couchdb:5984
+      COUCHDB_URL: http://couchdb:5984
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: password
+      COUCHDB_DBNAME: livesync
+    volumes:
+      - e2e-db:/db
+
 volumes:
   couchdb-data:
   vault-data:
   db-data:
+  e2e-db:
