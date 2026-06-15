@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -19,14 +19,20 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		return err
 	}
 
 	v, err := vault.New(cfg.VaultDir)
 	if err != nil {
-		log.Fatalf("vault: %v", err)
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -34,7 +40,7 @@ func main() {
 
 	d := daemon.New(cfg.CLIPath, cfg.DBDir, cfg.VaultDir, cfg.Interval)
 	if err := d.Start(ctx); err != nil {
-		log.Fatalf("failed to start livesync-cli daemon: %v", err)
+		return err
 	}
 	defer func() {
 		if err := d.Stop(); err != nil {
@@ -63,12 +69,14 @@ func main() {
 	}
 	go func() {
 		<-ctx.Done()
-		_ = httpSrv.Shutdown(context.Background())
+		if err := httpSrv.Shutdown(context.Background()); err != nil {
+			log.Printf("error shutting down http server: %v", err)
+		}
 	}()
 
 	log.Printf("livesync-mcp listening on %s (MCP at /mcp)", cfg.Addr)
-	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("http server: %v", err)
+	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
-	os.Exit(0)
+	return nil
 }

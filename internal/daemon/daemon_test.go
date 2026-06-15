@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"testing"
 	"time"
 )
@@ -39,9 +38,7 @@ func TestStartRunsCommandAndReportsHealthy(t *testing.T) {
 	d := New("sleep", "/tmp/db", "/tmp/vault", 0)
 	d.args = []string{"5"} // override: `sleep 5` instead of CLI args
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if err := d.Start(ctx); err != nil {
+	if err := d.Start(t.Context()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	// Give it a moment to be marked running.
@@ -63,9 +60,7 @@ func TestStopAfterProcessAlreadyExited(t *testing.T) {
 	d := New("true", "/tmp/db", "/tmp/vault", 0)
 	d.args = []string{}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if err := d.Start(ctx); err != nil {
+	if err := d.Start(t.Context()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	// Wait for the process to exit and the watcher to mark it unhealthy.
@@ -83,8 +78,7 @@ func TestStopAfterProcessAlreadyExited(t *testing.T) {
 
 func TestStartFailsForMissingBinary(t *testing.T) {
 	d := New("definitely-not-a-real-binary-xyz", "/tmp/db", "/tmp/vault", 0)
-	if err := d.Start(context.Background()); err == nil {
+	if err := d.Start(t.Context()); err == nil {
 		t.Fatal("expected error starting missing binary")
-		_ = d.Stop()
 	}
 }

@@ -12,7 +12,7 @@ import (
 func TestResolveRejectsSymlinkEscapeFile(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "secret.txt")
-	if err := os.WriteFile(outside, []byte("top secret"), 0o644); err != nil {
+	if err := os.WriteFile(outside, []byte("top secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(root, "leak.md")); err != nil {
@@ -46,7 +46,7 @@ func TestResolveRejectsSymlinkEscapeDir(t *testing.T) {
 // A symlink that stays inside the vault is fine.
 func TestResolveAllowsInVaultSymlink(t *testing.T) {
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "real"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "real"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "link")); err != nil {

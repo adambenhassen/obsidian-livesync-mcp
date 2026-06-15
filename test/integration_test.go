@@ -3,7 +3,6 @@
 package test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,12 +42,14 @@ func TestWriteNoteRoundtripToCouchDB(t *testing.T) {
 	vaultDir := t.TempDir()
 
 	d := daemon.New(cli, dbDir, vaultDir, 5)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	if err := d.Start(ctx); err != nil {
+	if err := d.Start(t.Context()); err != nil {
 		t.Fatalf("daemon start: %v", err)
 	}
-	defer d.Stop()
+	defer func() {
+		if err := d.Stop(); err != nil {
+			t.Logf("daemon stop: %v", err)
+		}
+	}()
 	time.Sleep(3 * time.Second) // let the initial mirror scan settle
 
 	v, err := vault.New(vaultDir)
@@ -140,7 +141,7 @@ func newCouch(t *testing.T) *couchClient {
 // it is absent, live, or soft-deleted (body "deleted": true).
 func (c *couchClient) state(t *testing.T, notePath string) docState {
 	t.Helper()
-	req, err := http.NewRequest("GET", c.base+"/"+c.db+"/"+notePath, nil)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, c.base+"/"+c.db+"/"+notePath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,11 +153,19 @@ func (c *couchClient) state(t *testing.T, notePath string) docState {
 		t.Logf("couch query error: %v", err)
 		return stateAbsent
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			t.Logf("couch body close: %v", cerr)
+		}
+	}()
 	if resp.StatusCode == http.StatusNotFound {
 		return stateAbsent
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Logf("couch read error: %v", err)
+		return stateAbsent
+	}
 	var doc struct {
 		Deleted bool `json:"deleted"`
 	}

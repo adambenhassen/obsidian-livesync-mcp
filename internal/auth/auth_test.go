@@ -13,7 +13,7 @@ func okHandler() http.Handler {
 func TestRequireBearerRejectsMissingOrWrong(t *testing.T) {
 	h := RequireBearer("secret", okHandler())
 	for _, hdr := range []string{"", "Bearer wrong", "secret"} {
-		req := httptest.NewRequest("POST", "/", nil)
+		req := httptest.NewRequestWithContext(t.Context(), "POST", "/", nil)
 		if hdr != "" {
 			req.Header.Set("Authorization", hdr)
 		}
@@ -27,7 +27,7 @@ func TestRequireBearerRejectsMissingOrWrong(t *testing.T) {
 
 func TestRequireBearerAllowsCorrect(t *testing.T) {
 	h := RequireBearer("secret", okHandler())
-	req := httptest.NewRequest("POST", "/", nil)
+	req := httptest.NewRequestWithContext(t.Context(), "POST", "/", nil)
 	req.Header.Set("Authorization", "Bearer secret")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -38,7 +38,7 @@ func TestRequireBearerAllowsCorrect(t *testing.T) {
 
 func TestEmptyTokenDisablesAuth(t *testing.T) {
 	h := RequireBearer("", okHandler())
-	req := httptest.NewRequest("POST", "/", nil)
+	req := httptest.NewRequestWithContext(t.Context(), "POST", "/", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {

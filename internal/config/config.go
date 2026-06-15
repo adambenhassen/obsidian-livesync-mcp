@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -34,10 +35,10 @@ func Load() (Config, error) {
 		CLIPath:  env("LIVESYNC_CLI", "livesync-cli"),
 	}
 	if c.VaultDir == "" {
-		return Config{}, fmt.Errorf("LIVESYNC_VAULT is required")
+		return Config{}, errors.New("LIVESYNC_VAULT is required")
 	}
 	if c.DBDir == "" {
-		return Config{}, fmt.Errorf("LIVESYNC_DB is required")
+		return Config{}, errors.New("LIVESYNC_DB is required")
 	}
 	if v := os.Getenv("LIVESYNC_INTERVAL"); v != "" {
 		n, err := strconv.Atoi(v)

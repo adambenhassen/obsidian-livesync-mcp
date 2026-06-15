@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -80,8 +81,8 @@ func evalExisting(p string) (string, error) {
 		resolved, err := filepath.EvalSymlinks(cur)
 		if err == nil {
 			full := resolved
-			for i := len(suffix) - 1; i >= 0; i-- {
-				full = filepath.Join(full, suffix[i])
+			for _, v := range slices.Backward(suffix) {
+				full = filepath.Join(full, v)
 			}
 			return full, nil
 		}
@@ -106,7 +107,8 @@ func (v *Vault) Read(rel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	b, err := os.ReadFile(abs)
+	// abs is validated by resolve() against traversal and symlink escape.
+	b, err := os.ReadFile(abs) //nolint:gosec // G304: path validated by resolve
 	if err != nil {
 		return "", err
 	}
@@ -125,10 +127,10 @@ func (v *Vault) Write(rel, content string, overwrite bool) error {
 			return ErrExists
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(abs), 0o750); err != nil {
 		return err
 	}
-	return os.WriteFile(abs, []byte(content), 0o644)
+	return os.WriteFile(abs, []byte(content), 0o600)
 }
 
 // Append appends content to a note, creating it (and parents) if absent.
@@ -137,16 +139,20 @@ func (v *Vault) Append(rel, content string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(abs), 0o750); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	// abs is validated by resolve() against traversal and symlink escape.
+	f, err := os.OpenFile(abs, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // G304: path validated by resolve
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = f.WriteString(content)
-	return err
+	_, werr := f.WriteString(content)
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
 }
 
 // Delete removes a note. Deletion propagates to CouchDB via the daemon's
@@ -169,7 +175,7 @@ func (v *Vault) Move(from, to string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 		return err
 	}
 	return os.Rename(src, dst)

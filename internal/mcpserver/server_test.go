@@ -2,12 +2,42 @@ package mcpserver
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/adambenhassen/obsidian-livesync-mcp/internal/vault"
 )
+
+func newVault(t *testing.T) *vault.Vault {
+	t.Helper()
+	v, err := vault.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func mustWrite(t *testing.T, v *vault.Vault, path, content string) {
+	t.Helper()
+	if err := v.Write(path, content, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// firstText returns the text of a tool result's first content item.
+func firstText(t *testing.T, res *mcp.CallToolResult) string {
+	t.Helper()
+	if len(res.Content) == 0 {
+		t.Fatal("tool result has no content")
+	}
+	tc, ok := res.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] is %T, want *mcp.TextContent", res.Content[0])
+	}
+	return tc.Text
+}
 
 // newConnectedClient drives registered tools through the in-memory transport.
 func newConnectedClient(t *testing.T, v *vault.Vault) (*mcp.ClientSession, func()) {
@@ -22,11 +52,15 @@ func newConnectedClient(t *testing.T, v *vault.Vault) (*mcp.ClientSession, func(
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cs, func() { _ = cs.Close() }
+	return cs, func() {
+		if err := cs.Close(); err != nil {
+			t.Errorf("client close: %v", err)
+		}
+	}
 }
 
 func TestWriteAndReadNoteViaTools(t *testing.T) {
-	v, _ := vault.New(t.TempDir())
+	v := newVault(t)
 	cs, done := newConnectedClient(t, v)
 	defer done()
 
@@ -45,16 +79,15 @@ func TestWriteAndReadNoteViaTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read_note: %v", err)
 	}
-	text := res.Content[0].(*mcp.TextContent).Text
-	if text != "hello" {
+	if text := firstText(t, res); text != "hello" {
 		t.Errorf("read_note text = %q, want %q", text, "hello")
 	}
 }
 
 func TestSearchViaTools(t *testing.T) {
-	v, _ := vault.New(t.TempDir())
-	_ = v.Write("findme.md", "needle in haystack", false)
-	_ = v.Write("other.md", "nothing", false)
+	v := newVault(t)
+	mustWrite(t, v, "findme.md", "needle in haystack")
+	mustWrite(t, v, "other.md", "nothing")
 	cs, done := newConnectedClient(t, v)
 	defer done()
 
@@ -65,15 +98,14 @@ func TestSearchViaTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search_notes: %v", err)
 	}
-	text := res.Content[0].(*mcp.TextContent).Text
-	if want := "findme.md"; !contains(text, want) {
-		t.Errorf("search result %q does not contain %q", text, want)
+	if text := firstText(t, res); !strings.Contains(text, "findme.md") {
+		t.Errorf("search result %q does not contain %q", text, "findme.md")
 	}
 }
 
 func TestDeleteViaTools(t *testing.T) {
-	v, _ := vault.New(t.TempDir())
-	_ = v.Write("gone.md", "data", false)
+	v := newVault(t)
+	mustWrite(t, v, "gone.md", "data")
 	cs, done := newConnectedClient(t, v)
 	defer done()
 
@@ -86,17 +118,4 @@ func TestDeleteViaTools(t *testing.T) {
 	if _, err := v.Read("gone.md"); err == nil {
 		t.Fatal("note should be deleted")
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0)
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }

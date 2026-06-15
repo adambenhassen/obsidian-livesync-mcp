@@ -3,9 +3,9 @@ package vault
 import "testing"
 
 func TestSearchFilename(t *testing.T) {
-	v, _ := New(t.TempDir())
-	_ = v.Write("Meeting Notes.md", "body", false)
-	_ = v.Write("groceries.md", "body", false)
+	v := newTestVault(t)
+	mustWrite(t, v, "Meeting Notes.md", "body", false)
+	mustWrite(t, v, "groceries.md", "body", false)
 	res, err := v.Search("meeting", "filename")
 	if err != nil {
 		t.Fatal(err)
@@ -16,9 +16,9 @@ func TestSearchFilename(t *testing.T) {
 }
 
 func TestSearchContent(t *testing.T) {
-	v, _ := New(t.TempDir())
-	_ = v.Write("a.md", "the quick brown fox", false)
-	_ = v.Write("b.md", "nothing here", false)
+	v := newTestVault(t)
+	mustWrite(t, v, "a.md", "the quick brown fox", false)
+	mustWrite(t, v, "b.md", "nothing here", false)
 	res, err := v.Search("brown", "content")
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestSearchContent(t *testing.T) {
 }
 
 func TestSearchInvalidMode(t *testing.T) {
-	v, _ := New(t.TempDir())
+	v := newTestVault(t)
 	if _, err := v.Search("x", "regex"); err == nil {
 		t.Fatal("expected error for invalid mode")
 	}

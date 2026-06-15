@@ -26,7 +26,7 @@ func New(v *vault.Vault) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "livesync-mcp", Version: "0.1.0"}, nil)
 
 	type listArgs struct {
-		Folder    string `json:"folder,omitempty" jsonschema:"vault-relative folder, empty for root"`
+		Folder    string `json:"folder,omitempty"    jsonschema:"vault-relative folder, empty for root"`
 		Recursive bool   `json:"recursive,omitempty" jsonschema:"recurse into subfolders"`
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: "list_notes", Description: "List notes under a folder."},
@@ -52,8 +52,8 @@ func New(v *vault.Vault) *mcp.Server {
 		})
 
 	type writeArgs struct {
-		Path      string `json:"path" jsonschema:"vault-relative note path"`
-		Content   string `json:"content" jsonschema:"full note content"`
+		Path      string `json:"path"                jsonschema:"vault-relative note path"`
+		Content   string `json:"content"             jsonschema:"full note content"`
 		Overwrite bool   `json:"overwrite,omitempty" jsonschema:"overwrite if it exists"`
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: "write_note", Description: "Create or update a note."},
@@ -65,7 +65,7 @@ func New(v *vault.Vault) *mcp.Server {
 		})
 
 	type appendArgs struct {
-		Path    string `json:"path" jsonschema:"vault-relative note path"`
+		Path    string `json:"path"    jsonschema:"vault-relative note path"`
 		Content string `json:"content" jsonschema:"text to append"`
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: "append_to_note", Description: "Append text to a note."},
@@ -86,7 +86,7 @@ func New(v *vault.Vault) *mcp.Server {
 
 	type moveArgs struct {
 		From string `json:"from" jsonschema:"current vault-relative path"`
-		To   string `json:"to" jsonschema:"new vault-relative path"`
+		To   string `json:"to"   jsonschema:"new vault-relative path"`
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: "move_note", Description: "Move or rename a note."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a moveArgs) (*mcp.CallToolResult, any, error) {
@@ -98,7 +98,7 @@ func New(v *vault.Vault) *mcp.Server {
 
 	type searchArgs struct {
 		Query string `json:"query" jsonschema:"search text"`
-		Mode  string `json:"mode" jsonschema:"\"filename\" or \"content\""`
+		Mode  string `json:"mode"  jsonschema:"\"filename\" or \"content\""`
 	}
 	mcp.AddTool(s, &mcp.Tool{Name: "search_notes", Description: "Search notes by filename or content."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a searchArgs) (*mcp.CallToolResult, any, error) {
