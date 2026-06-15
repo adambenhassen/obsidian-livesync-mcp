@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -55,7 +56,11 @@ func main() {
 	})
 	mux.Handle("/mcp", auth.RequireBearer(cfg.APIKey, mcpHandler))
 
-	httpSrv := &http.Server{Addr: cfg.Addr, Handler: mux}
+	httpSrv := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	go func() {
 		<-ctx.Done()
 		_ = httpSrv.Shutdown(context.Background())
