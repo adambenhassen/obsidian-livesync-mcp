@@ -184,6 +184,14 @@ the id as the plaintext path, so it needs no extra configuration.)
 > `Handler isStorageInsensitive is not assigned` and syncs nothing), so document
 > ids are always lowercased here.
 
+The server currently only *detects* conflicts; it can't resolve them. Resolution
+still has to happen in Obsidian (or another LiveSync client).
+
+## Roadmap
+
+- [ ] **`resolve_conflict` tool** — let an agent resolve a detected conflict
+  (pick a revision or merge) without leaving the MCP server.
+
 ## Example MCP client config
 
 ```json
