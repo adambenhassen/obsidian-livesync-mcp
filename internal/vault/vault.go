@@ -203,3 +203,33 @@ func (v *Vault) Metadata(rel string) (Note, error) {
 	}
 	return v.toNote(abs, info)
 }
+
+// Search finds notes by mode "filename" (matches the path) or "content"
+// (matches file body). Matching is case-insensitive substring.
+func (v *Vault) Search(query, mode string) ([]Note, error) {
+	if mode != "filename" && mode != "content" {
+		return nil, errors.New("search mode must be \"filename\" or \"content\"")
+	}
+	all, err := v.List("", true)
+	if err != nil {
+		return nil, err
+	}
+	q := strings.ToLower(query)
+	var matches []Note
+	for _, n := range all {
+		if mode == "filename" {
+			if strings.Contains(strings.ToLower(n.Path), q) {
+				matches = append(matches, n)
+			}
+			continue
+		}
+		body, err := v.Read(n.Path)
+		if err != nil {
+			return nil, err
+		}
+		if strings.Contains(strings.ToLower(body), q) {
+			matches = append(matches, n)
+		}
+	}
+	return matches, nil
+}
