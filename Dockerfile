@@ -47,34 +47,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /livesync-mcp ./cmd/livesync-mcp
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Stage 3 — runtime
-# ─────────────────────────────────────────────────────────────────────────────
-FROM node:22-slim
-WORKDIR /app
-
-# livesync-cli bundle + its runtime node_modules
-COPY --from=cli-builder /deps/node_modules ./node_modules
-COPY --from=cli-builder /src/src/apps/cli/dist ./dist
-
-# Thin wrapper: `livesync-cli <db> daemon --vault <vault>` maps straight to the
-# bundle (no database-path injection — the Go supervisor passes it explicitly).
-COPY deploy/livesync-cli /usr/local/bin/livesync-cli
-COPY --from=go-builder /livesync-mcp /usr/local/bin/livesync-mcp
-COPY deploy/seed-settings.sh /usr/local/bin/seed-settings.sh
-COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/livesync-cli /usr/local/bin/seed-settings.sh /usr/local/bin/entrypoint.sh
-
-ENV LIVESYNC_CLI=livesync-cli \
-    LIVESYNC_VAULT=/vault \
-    LIVESYNC_DB=/db \
-    LIVESYNC_INTERVAL=5 \
-    MCP_ADDR=0.0.0.0:8765
-EXPOSE 8765
-VOLUME ["/vault", "/db"]
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Stage 4 — e2e test runner (Go toolchain + Node CLI + source)
+#  Stage 3 — e2e test runner (Go toolchain + Node CLI + source)
 #  Runs the gated integration test (test/integration_test.go) against a real
 #  CouchDB. Build with `--target e2e`; driven by the compose `e2e-test` service.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -103,3 +76,32 @@ RUN chmod +x /usr/local/bin/livesync-cli /usr/local/bin/seed-settings.sh /usr/lo
 COPY go.mod go.sum ./
 COPY . .
 ENTRYPOINT ["/usr/local/bin/run-e2e.sh"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Stage 4 — runtime (LAST stage = the default `docker build` target, so a bare
+#  build produces the server image, not the test runner). Compose also pins
+#  `target: runtime` for clarity.
+# ─────────────────────────────────────────────────────────────────────────────
+FROM node:22-slim AS runtime
+WORKDIR /app
+
+# livesync-cli bundle + its runtime node_modules
+COPY --from=cli-builder /deps/node_modules ./node_modules
+COPY --from=cli-builder /src/src/apps/cli/dist ./dist
+
+# Thin wrapper: `livesync-cli <db> daemon --vault <vault>` maps straight to the
+# bundle (no database-path injection — the Go supervisor passes it explicitly).
+COPY deploy/livesync-cli /usr/local/bin/livesync-cli
+COPY --from=go-builder /livesync-mcp /usr/local/bin/livesync-mcp
+COPY deploy/seed-settings.sh /usr/local/bin/seed-settings.sh
+COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/livesync-cli /usr/local/bin/seed-settings.sh /usr/local/bin/entrypoint.sh
+
+ENV LIVESYNC_CLI=livesync-cli \
+    LIVESYNC_VAULT=/vault \
+    LIVESYNC_DB=/db \
+    LIVESYNC_INTERVAL=5 \
+    MCP_ADDR=0.0.0.0:8765
+EXPOSE 8765
+VOLUME ["/vault", "/db"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

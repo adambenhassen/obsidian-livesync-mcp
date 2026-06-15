@@ -45,6 +45,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     depends_on:
       couchdb-init:
         condition: service_completed_successfully
