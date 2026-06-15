@@ -60,8 +60,8 @@ func TestWriteNoteRoundtripToCouchDB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Propagation: the note's path should appear among CouchDB document ids.
-	if !couch.waitForDoc(t, name, true, 20*time.Second) {
+	// Write propagation: the note appears in CouchDB as a live LiveSync doc.
+	if !couch.waitForState(t, name, stateLive, 20*time.Second) {
 		t.Fatalf("note %q did not propagate to CouchDB within timeout", name)
 	}
 
@@ -72,27 +72,19 @@ func TestWriteNoteRoundtripToCouchDB(t *testing.T) {
 
 	// Deletion propagation — RESOLVED design open question.
 	//
-	// Empirically, a filesystem unlink does NOT propagate to CouchDB: the
-	// daemon's chokidar unlink handler does not push a deletion in daemon/
-	// interval mode, so the remote document stays live. The file is removed
-	// locally and is not restored, but remote and other clients keep it.
-	//
-	// This test documents that known limitation (it is the regression guard).
-	// If deletion propagation is later implemented (e.g. routing delete_note
-	// through `livesync-cli <db> rm`, which needs the daemon paused), flip this
-	// expectation to want=false.
+	// A filesystem unlink DOES propagate: the daemon's watcher pushes a LiveSync
+	// tombstone, i.e. the CouchDB doc body gains "deleted": true with a bumped
+	// _rev. Note LiveSync soft-deletes — the doc is NOT removed via CouchDB's
+	// native _deleted, so it still appears in _all_docs; the body's "deleted"
+	// field is the correct signal.
 	if err := v.Delete(name); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := v.Read(name); !os.IsNotExist(err) {
 		t.Fatalf("note %q should be removed from the local vault, err=%v", name, err)
 	}
-	if !couch.waitForDoc(t, name, true, 10*time.Second) {
-		t.Logf("NOTE: deletion of %q DID propagate to CouchDB — daemon behaviour "+
-			"changed; update delete_note docs and flip this assertion", name)
-	} else {
-		t.Logf("confirmed known limitation: fs deletion of %q did not propagate "+
-			"to CouchDB (remote doc still live)", name)
+	if !couch.waitForState(t, name, stateDeleted, 20*time.Second) {
+		t.Fatalf("deletion of %q did not propagate to CouchDB (no tombstone)", name)
 	}
 }
 
@@ -103,6 +95,25 @@ func mustEnv(t *testing.T, key string) string {
 		t.Fatalf("%s is required for the integration test", key)
 	}
 	return v
+}
+
+type docState int
+
+const (
+	stateAbsent docState = iota
+	stateLive
+	stateDeleted
+)
+
+func (s docState) String() string {
+	switch s {
+	case stateLive:
+		return "live"
+	case stateDeleted:
+		return "deleted"
+	default:
+		return "absent"
+	}
 }
 
 type couchClient struct {
@@ -125,11 +136,11 @@ func newCouch(t *testing.T) *couchClient {
 	}
 }
 
-// liveDocWithID reports whether a non-deleted document whose id contains sub
-// currently exists in the database.
-func (c *couchClient) liveDocWithID(t *testing.T, sub string) bool {
+// state fetches the LiveSync document at the given note path and reports whether
+// it is absent, live, or soft-deleted (body "deleted": true).
+func (c *couchClient) state(t *testing.T, notePath string) docState {
 	t.Helper()
-	req, err := http.NewRequest("GET", c.base+"/"+c.db+"/_all_docs", nil)
+	req, err := http.NewRequest("GET", c.base+"/"+c.db+"/"+notePath, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,37 +150,32 @@ func (c *couchClient) liveDocWithID(t *testing.T, sub string) bool {
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		t.Logf("couch query error: %v", err)
-		return false
+		return stateAbsent
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return stateAbsent
+	}
 	body, _ := io.ReadAll(resp.Body)
-	var out struct {
-		Rows []struct {
-			ID    string `json:"id"`
-			Value struct {
-				Deleted bool `json:"deleted"`
-			} `json:"value"`
-		} `json:"rows"`
+	var doc struct {
+		Deleted bool `json:"deleted"`
 	}
-	if err := json.Unmarshal(body, &out); err != nil {
+	if err := json.Unmarshal(body, &doc); err != nil {
 		t.Logf("couch decode error: %v (body=%s)", err, string(body))
-		return false
+		return stateAbsent
 	}
-	for _, r := range out.Rows {
-		if strings.Contains(r.ID, sub) && !r.Value.Deleted {
-			return true
-		}
+	if doc.Deleted {
+		return stateDeleted
 	}
-	return false
+	return stateLive
 }
 
-// waitForDoc polls until a live doc matching sub is present (want=true) or
-// absent (want=false), returning whether the desired state was reached.
-func (c *couchClient) waitForDoc(t *testing.T, sub string, want bool, timeout time.Duration) bool {
+// waitForState polls until the note reaches want, returning whether it did.
+func (c *couchClient) waitForState(t *testing.T, notePath string, want docState, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if c.liveDocWithID(t, sub) == want {
+		if c.state(t, notePath) == want {
 			return true
 		}
 		time.Sleep(500 * time.Millisecond)

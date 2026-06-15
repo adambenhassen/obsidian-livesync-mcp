@@ -81,7 +81,7 @@ MCP_API_KEY=changeme \
 | `read_note(path)` | Return note content |
 | `write_note(path, content, overwrite?)` | Create or update a note |
 | `append_to_note(path, content)` | Append to a note |
-| `delete_note(path)` | Delete a note locally (see deletion caveat) |
+| `delete_note(path)` | Delete a note (propagates to CouchDB) |
 | `move_note(from, to)` | Rename / move a note |
 | `search_notes(query, mode)` | Search by `filename` or `content` |
 | `get_note_metadata(path)` | Size, modification time |
@@ -90,15 +90,14 @@ All note paths are **vault-relative and forward-slashed** (e.g.
 `Daily/2026-06-15.md`); absolute paths, `..` traversal, and symlinks escaping
 the vault are rejected.
 
-### Deletion caveat
+### Deletion semantics
 
-`delete_note` removes the file from the local vault. Verified end-to-end,
-**filesystem deletions do not propagate to CouchDB** through the daemon — the
-remote document (and therefore other LiveSync clients) keeps the note. The local
-file is not restored. Propagating a deletion requires the CLI's
-`livesync-cli <db> rm <path>`, which needs exclusive access to the
-single-process database (the daemon must be paused). This is left as an explicit
-limitation; write/append/move/read/list/search all sync normally.
+`delete_note` removes the file from the vault, and the daemon propagates the
+deletion to CouchDB. Verified end-to-end: LiveSync **soft-deletes** — the
+CouchDB document is not removed via CouchDB's native `_deleted`; instead its body
+gains `"deleted": true` (with a bumped `_rev`), which is the tombstone other
+LiveSync clients use to remove the note locally. So a deleted note still appears
+in `_all_docs`, but its body carries the deletion marker.
 
 ## Example MCP client config
 
