@@ -3,6 +3,7 @@
 package test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,8 +30,10 @@ func requireIT(t *testing.T) {
 
 // seedDB writes a configured .livesync/settings.json into dbDir so a daemon can
 // be started against it, pointed at the CouchDB from the COUCHDB_* env. Lets a
-// single test drive several independent instances against one CouchDB.
-func seedDB(t *testing.T, dbDir string) {
+// single test drive several independent instances against one CouchDB. Optional
+// opts mutate the settings map before it is written (e.g. to enable path
+// obfuscation).
+func seedDB(t *testing.T, dbDir string, opts ...func(map[string]any)) {
 	t.Helper()
 	cli := mustEnv(t, "LIVESYNC_CLI")
 	settings := filepath.Join(dbDir, ".livesync", "settings.json")
@@ -58,6 +62,9 @@ func seedDB(t *testing.T, dbDir string) {
 	m["couchDB_DBNAME"] = mustEnv(t, "COUCHDB_DBNAME")
 	m["remoteType"] = ""
 	m["isConfigured"] = true
+	for _, opt := range opts {
+		opt(m)
+	}
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -264,6 +271,91 @@ func TestRestartPreservesData(t *testing.T) {
 	}
 }
 
+// TestPathObfuscatedVaultSyncsContent guards the USE_PATH_OBFUSCATION fix. A
+// vault created with Obsidian's "Use path obfuscation" enabled previously synced
+// as 0-byte files: the daemon could list paths but not resolve the content
+// chunks, because usePathObfuscation was left at its init-settings default of
+// false. With it seeded to match the vault, content roundtrips intact.
+//
+// Path obfuscation is an E2EE feature — it engages only with encryption +
+// passphrase (verified empirically: usePathObfuscation alone leaves the doc
+// stored under its plaintext id). So this test enables encrypt/passphrase too,
+// matching deploy/seed-settings.sh, and runs against an ISOLATED database so the
+// encrypted vault never mixes with the plaintext vaults the other tests leave in
+// the shared db.
+//
+// Under obfuscation the CouchDB document id is a hash, not the plaintext path, so
+// the note is not retrievable by path — that property doubles as proof obfuscation
+// actually engaged. The content assertion is a two-instance filesystem roundtrip:
+// write with obfuscation on, pull into a fresh obfuscation-on instance, and check
+// the content survived (non-empty, equal) rather than arriving as the 0-byte file
+// the bug produced.
+func TestPathObfuscatedVaultSyncsContent(t *testing.T) {
+	requireIT(t)
+	db := fmt.Sprintf("obf-%d", time.Now().UnixNano())
+	couch := newCouch(t)
+	couch.db = db
+	couch.createDB(t)
+	t.Cleanup(func() { couch.dropDB(t) })
+
+	obfuscate := func(m map[string]any) {
+		m["couchDB_DBNAME"] = db
+		m["usePathObfuscation"] = true
+		m["encrypt"] = true
+		m["passphrase"] = "integration-obfuscation-passphrase"
+	}
+
+	// Instance A — obfuscation on; write a note with real content.
+	dbA, vaultA := t.TempDir(), t.TempDir()
+	seedDB(t, dbA, obfuscate)
+	dA := startDaemon(t, dbA, vaultA)
+	time.Sleep(3 * time.Second) // let the initial mirror scan settle
+
+	vA, err := vault.New(vaultA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("obfuscated-%d.md", time.Now().UnixNano())
+	const body = "content behind path obfuscation"
+	before := couch.totalDocs(t)
+	if err := vA.Write(name, body, true); err != nil {
+		t.Fatal(err)
+	}
+	// The obfuscated id is unknown, so gate on CouchDB's doc count rising (the
+	// note plus its content chunk(s) land as new docs).
+	if !couch.waitForDocCount(t, before+1, 20*time.Second) {
+		t.Fatalf("obfuscated note %q never propagated to CouchDB", name)
+	}
+	// Obfuscation must actually have engaged, otherwise the roundtrip below is a
+	// no-op guard (plaintext content roundtrips fine too). Under path obfuscation
+	// the document id is a hash of the path, so the note is NOT retrievable by its
+	// plaintext path — a plaintext vault would be.
+	if _, _, found := couch.getDoc(t, name); found {
+		t.Fatalf("note %q stored under its plaintext id; path obfuscation did not engage", name)
+	}
+	if err := dA.Stop(); err != nil {
+		t.Fatalf("stop instance A: %v", err)
+	}
+
+	// Instance B — fresh deployment, obfuscation on; must pull the note with its
+	// content intact (the bug produced a 0-byte file here).
+	dbB, vaultB := t.TempDir(), t.TempDir()
+	seedDB(t, dbB, obfuscate)
+	startDaemon(t, dbB, vaultB)
+
+	vB, err := vault.New(vaultB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := waitForLocalNote(t, vB, name, 25*time.Second)
+	if !ok {
+		t.Fatalf("obfuscated note %q was NOT pulled into the fresh vault", name)
+	}
+	if got != body {
+		t.Fatalf("pulled content = %q, want %q (empty = the obfuscation bug)", got, body)
+	}
+}
+
 func mustEnv(t *testing.T, key string) string {
 	t.Helper()
 	v := os.Getenv(key)
@@ -364,6 +456,96 @@ func (c *couchClient) state(t *testing.T, notePath string) docState {
 	default:
 		return stateLive
 	}
+}
+
+// createDB creates the client's CouchDB database (idempotent: an existing db is
+// not an error). Used to isolate the encrypted obfuscation test from the shared db.
+func (c *couchClient) createDB(t *testing.T) {
+	t.Helper()
+	c.adminReq(t, http.MethodPut, http.StatusCreated, http.StatusPreconditionFailed)
+}
+
+// dropDB deletes the client's CouchDB database (idempotent: a missing db is ok).
+func (c *couchClient) dropDB(t *testing.T) {
+	t.Helper()
+	c.adminReq(t, http.MethodDelete, http.StatusOK, http.StatusNotFound)
+}
+
+// adminReq issues method against the database root and fails unless the response
+// status is one of okStatuses. It uses context.Background() (not t.Context())
+// because dropDB runs from t.Cleanup, where the test context is already canceled.
+func (c *couchClient) adminReq(t *testing.T, method string, okStatuses ...int) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), method, c.base+"/"+c.db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.user != "" {
+		req.SetBasicAuth(c.user, c.pass)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		t.Fatalf("couch %s %s: %v", method, c.db, err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			t.Logf("couch body close: %v", cerr)
+		}
+	}()
+	if slices.Contains(okStatuses, resp.StatusCode) {
+		return
+	}
+	t.Fatalf("couch %s %s: status %d, want one of %v", method, c.db, resp.StatusCode, okStatuses)
+}
+
+// totalDocs returns the CouchDB database's total document count (_all_docs
+// total_rows). Used to detect that an obfuscated note synced when its document
+// id is unknowable from the plaintext path.
+func (c *couchClient) totalDocs(t *testing.T) int {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, c.base+"/"+c.db+"/_all_docs?limit=0", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.user != "" {
+		req.SetBasicAuth(c.user, c.pass)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		t.Logf("couch _all_docs error: %v", err)
+		return -1
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			t.Logf("couch body close: %v", cerr)
+		}
+	}()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Logf("couch read error: %v", err)
+		return -1
+	}
+	var out struct {
+		TotalRows int `json:"total_rows"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Logf("couch decode error: %v (body=%s)", err, string(body))
+		return -1
+	}
+	return out.TotalRows
+}
+
+// waitForDocCount polls until the database holds at least want documents.
+func (c *couchClient) waitForDocCount(t *testing.T, want int, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if c.totalDocs(t) >= want {
+			return true
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return false
 }
 
 // waitForState polls until the note reaches want, returning whether it did.
