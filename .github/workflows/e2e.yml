@@ -1,0 +1,38 @@
+name: E2E
+
+# Runs the gated integration tests (build tag `integration`) against a real
+# CouchDB in Docker. Heavy (builds livesync-cli from upstream source), so it is
+# kept out of the fast per-commit `ci.yml`: nightly, manual, and on code pushes
+# to the default branch (docs-only changes are skipped via path filters).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+  push:
+    branches: [master, main]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "deploy/**"
+      - ".github/workflows/e2e.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run gated integration tests (CouchDB + from-source livesync-cli)
+        run: docker compose --profile test run --build --rm e2e-test
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose logs --no-color || true
+      - name: Teardown
+        if: always()
+        run: docker compose --profile test down -v || true
