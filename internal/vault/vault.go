@@ -50,3 +50,37 @@ func (v *Vault) resolve(rel string) (string, error) {
 	}
 	return abs, nil
 }
+
+// ErrExists is returned by Write when overwrite is false and the note exists.
+var ErrExists = errors.New("note already exists")
+
+// Read returns the UTF-8 content of a note.
+func (v *Vault) Read(rel string) (string, error) {
+	abs, err := v.resolve(rel)
+	if err != nil {
+		return "", err
+	}
+	b, err := os.ReadFile(abs)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// Write creates or updates a note. If overwrite is false and the note already
+// exists, it returns ErrExists. Parent directories are created as needed.
+func (v *Vault) Write(rel, content string, overwrite bool) error {
+	abs, err := v.resolve(rel)
+	if err != nil {
+		return err
+	}
+	if !overwrite {
+		if _, err := os.Stat(abs); err == nil {
+			return ErrExists
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(abs, []byte(content), 0o644)
+}
