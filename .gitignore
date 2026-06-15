@@ -1,0 +1,7 @@
+/livesync-mcp
+/dist/
+*.test
+cov.out
+.env
+.testvault/
+.testdb/
