@@ -69,6 +69,15 @@ services:
     volumes:
       - vault-data:/vault
       - db-data:/db
+    # Self-heal: the server exits if the sync daemon dies, and /healthz reports
+    # 503 when sync is down — restart the container so syncing resumes.
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8765/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # Gated Go integration test (build tag `integration`). Runs only under the
   # `test` profile: `docker compose --profile test run --rm e2e-test`.

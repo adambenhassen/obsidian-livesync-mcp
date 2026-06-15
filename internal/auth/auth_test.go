@@ -36,6 +36,29 @@ func TestRequireBearerAllowsCorrect(t *testing.T) {
 	}
 }
 
+// Boundary cases that a weakened comparison (e.g. prefix match, length-blind
+// compare, case-insensitive prefix) would wrongly accept.
+func TestRequireBearerBoundaryRejections(t *testing.T) {
+	h := RequireBearer("secret", okHandler())
+	bad := []string{
+		"Bearer ",        // prefix only, empty token
+		"Bearer secre",   // one char short (prefix of real token)
+		"Bearer secrets", // one char long
+		"bearer secret",  // wrong case on the scheme
+		"Bearersecret",   // missing space
+		"Basic secret",   // wrong scheme
+	}
+	for _, hdr := range bad {
+		req := httptest.NewRequestWithContext(t.Context(), "POST", "/", nil)
+		req.Header.Set("Authorization", hdr)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("auth %q → %d, want 401", hdr, rec.Code)
+		}
+	}
+}
+
 func TestEmptyTokenDisablesAuth(t *testing.T) {
 	h := RequireBearer("", okHandler())
 	req := httptest.NewRequestWithContext(t.Context(), "POST", "/", nil)

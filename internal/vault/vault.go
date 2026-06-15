@@ -156,7 +156,8 @@ func (v *Vault) Append(rel, content string) error {
 }
 
 // Delete removes a note. Deletion propagates to CouchDB via the daemon's
-// filesystem watcher (verified by the integration test).
+// filesystem watcher as a LiveSync tombstone (verified by
+// TestWriteNoteRoundtripToCouchDB).
 func (v *Vault) Delete(rel string) error {
 	abs, err := v.resolve(rel)
 	if err != nil {
@@ -165,7 +166,9 @@ func (v *Vault) Delete(rel string) error {
 	return os.Remove(abs)
 }
 
-// Move relocates a note, creating destination parents as needed.
+// Move relocates a note, creating destination parents as needed. It refuses to
+// overwrite an existing destination (returns ErrExists) so a rename can never
+// silently destroy another note; callers that want a replace must delete first.
 func (v *Vault) Move(from, to string) error {
 	src, err := v.resolve(from)
 	if err != nil {
@@ -174,6 +177,9 @@ func (v *Vault) Move(from, to string) error {
 	dst, err := v.resolve(to)
 	if err != nil {
 		return err
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return ErrExists
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
 		return err

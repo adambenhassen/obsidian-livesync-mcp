@@ -1,6 +1,9 @@
 package vault
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestAppendCreatesAndAppends(t *testing.T) {
 	v := newTestVault(t)
@@ -37,5 +40,23 @@ func TestMoveRelocatesNote(t *testing.T) {
 	}
 	if got := mustRead(t, v, "sub/to.md"); got != "body" {
 		t.Errorf("moved content = %q", got)
+	}
+}
+
+func TestMoveRefusesToClobberExisting(t *testing.T) {
+	v := newTestVault(t)
+	mustWrite(t, v, "src.md", "source", false)
+	mustWrite(t, v, "dst.md", "precious destination", false)
+
+	err := v.Move("src.md", "dst.md")
+	if !errors.Is(err, ErrExists) {
+		t.Fatalf("Move onto existing note = %v, want ErrExists", err)
+	}
+	// Both notes must be intact (no data lost).
+	if got := mustRead(t, v, "dst.md"); got != "precious destination" {
+		t.Errorf("destination was clobbered: %q", got)
+	}
+	if got := mustRead(t, v, "src.md"); got != "source" {
+		t.Errorf("source should be untouched after refused move: %q", got)
 	}
 }

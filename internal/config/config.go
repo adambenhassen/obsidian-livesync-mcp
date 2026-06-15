@@ -14,7 +14,7 @@ type Config struct {
 	VaultDir string // LIVESYNC_VAULT, required
 	DBDir    string // LIVESYNC_DB, required
 	CLIPath  string // LIVESYNC_CLI, default "livesync-cli"
-	Interval int    // LIVESYNC_INTERVAL, daemon poll seconds; 0 = continuous
+	Interval int    // LIVESYNC_INTERVAL, daemon CouchDB poll seconds; must be > 0 to sync
 	ReadOnly bool   // READ_ONLY, when true only read tools are exposed
 }
 

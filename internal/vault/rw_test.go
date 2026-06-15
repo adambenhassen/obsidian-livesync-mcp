@@ -22,6 +22,17 @@ func TestWriteNoOverwriteFailsIfExists(t *testing.T) {
 	}
 }
 
+func TestWriteOverwriteReplacesContent(t *testing.T) {
+	v := newTestVault(t)
+	mustWrite(t, v, "a.md", "first", false)
+	if err := v.Write("a.md", "second", true); err != nil {
+		t.Fatalf("Write(overwrite=true) error = %v", err)
+	}
+	if got := mustRead(t, v, "a.md"); got != "second" {
+		t.Errorf("Read() = %q, want %q", got, "second")
+	}
+}
+
 func TestReadMissingReturnsNotExist(t *testing.T) {
 	v := newTestVault(t)
 	if _, err := v.Read("nope.md"); err == nil {

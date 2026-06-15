@@ -24,8 +24,18 @@ for db in _users _replicator _global_changes "${COUCHDB_DBNAME}"; do
     esac
 done
 
-# LiveSync needs higher revs_limit tolerance and bulk limits; safe defaults.
-curl -s $AUTH -X PUT "${COUCHDB_URL}/_node/_local/_config/couchdb/max_document_size" -d '"50000000"' >/dev/null || true
-curl -s $AUTH -X PUT "${COUCHDB_URL}/_node/_local/_config/chttpd/max_http_request_size" -d '"4294967296"' >/dev/null || true
+# LiveSync benefits from higher document/request size limits. These are best
+# effort (a managed CouchDB may forbid _config writes), but report failures
+# instead of masking them with `|| true` so a misconfigured node is visible.
+tune() {
+    name="$1"
+    code=$(curl -s -o /dev/null -w '%{http_code}' $AUTH -X PUT "${COUCHDB_URL}/_node/_local/_config/$name" -d "$2")
+    case "$code" in
+        200) ;;
+        *) echo "[couch-init] WARNING: could not set $name (HTTP $code)" >&2 ;;
+    esac
+}
+tune "couchdb/max_document_size" '"50000000"'
+tune "chttpd/max_http_request_size" '"4294967296"'
 
 echo "[couch-init] done"

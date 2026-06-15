@@ -120,6 +120,35 @@ func TestDeleteViaTools(t *testing.T) {
 	}
 }
 
+func TestAppendAndMoveViaTools(t *testing.T) {
+	v := newVault(t)
+	cs, done := newConnectedClient(t, v, false)
+	defer done()
+
+	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "append_to_note",
+		Arguments: map[string]any{"path": "log.md", "content": "line\n"},
+	}); err != nil {
+		t.Fatalf("append_to_note: %v", err)
+	}
+	if got, err := v.Read("log.md"); err != nil || got != "line\n" {
+		t.Fatalf("after append: got %q err %v", got, err)
+	}
+
+	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "move_note",
+		Arguments: map[string]any{"from": "log.md", "to": "archive/log.md"},
+	}); err != nil {
+		t.Fatalf("move_note: %v", err)
+	}
+	if _, err := v.Read("log.md"); err == nil {
+		t.Error("source should be gone after move")
+	}
+	if got, err := v.Read("archive/log.md"); err != nil || got != "line\n" {
+		t.Fatalf("after move: got %q err %v", got, err)
+	}
+}
+
 func TestReadOnlyExposesOnlyReadTools(t *testing.T) {
 	v := newVault(t)
 	mustWrite(t, v, "seed.md", "existing content")

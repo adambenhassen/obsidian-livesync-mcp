@@ -23,9 +23,11 @@ type Daemon struct {
 
 // New returns a Daemon configured to run the LiveSync CLI daemon. When interval
 // is > 0, the daemon polls CouchDB every interval seconds (`--interval`), which
-// is the reliable way to drive bidirectional sync: the CLI resets the liveSync
-// settings flag during its startup migration, but the CLI flag is honoured
-// regardless. interval <= 0 omits the flag (continuous mode per settings).
+// is the reliable way to drive bidirectional sync: the current CLI resets the
+// liveSync settings flag during its startup migration (observed behaviour), but
+// the CLI flag is honoured regardless. interval <= 0 omits the flag, leaving
+// replication to the settings file — which, given that migration, does not
+// reliably sync; set a positive interval for actual syncing.
 func New(cliPath, dbDir, vaultDir string, interval int) *Daemon {
 	args := []string{dbDir, "daemon", "--vault", vaultDir}
 	if interval > 0 {
@@ -63,12 +65,23 @@ func (d *Daemon) Start(ctx context.Context) error {
 		d.alive = false
 		stopping := d.stopping
 		d.mu.Unlock()
-		if waitErr != nil && !stopping {
-			log.Printf("livesync-cli daemon exited unexpectedly: %v", waitErr)
+		// Log every unexpected exit, including a clean (exit 0) self-termination
+		// — otherwise a dead daemon shows only as /healthz 503 with no reason.
+		if !stopping {
+			log.Printf("livesync-cli daemon exited unexpectedly (waitErr=%v)", waitErr)
 		}
 		close(done)
 	}()
 	return nil
+}
+
+// Done returns a channel that is closed when the supervised process exits (for
+// any reason, including an intentional Stop). It is valid only after Start.
+// Callers can select on it to react to an unexpected daemon death.
+func (d *Daemon) Done() <-chan struct{} {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.done
 }
 
 // Healthy reports whether the supervised process is currently running.

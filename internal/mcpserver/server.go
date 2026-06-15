@@ -124,7 +124,7 @@ func registerWriteTools(s *mcp.Server, v *vault.Vault) {
 		From string `json:"from" jsonschema:"current vault-relative path"`
 		To   string `json:"to"   jsonschema:"new vault-relative path"`
 	}
-	mcp.AddTool(s, &mcp.Tool{Name: "move_note", Description: "Move or rename a note."},
+	mcp.AddTool(s, &mcp.Tool{Name: "move_note", Description: "Move or rename a note. Fails if the destination already exists."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a moveArgs) (*mcp.CallToolResult, any, error) {
 			if err := v.Move(a.From, a.To); err != nil {
 				return nil, nil, err

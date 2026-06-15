@@ -67,6 +67,19 @@ func run() error {
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	// If the sync daemon dies on its own, stop serving and exit non-zero so the
+	// supervisor (Docker restart policy / systemd) restarts the whole process
+	// rather than silently serving an MCP API that no longer syncs to CouchDB.
+	daemonDied := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done(): // graceful shutdown (signal)
+		case <-d.Done(): // daemon exited on its own
+			close(daemonDied)
+			stop()
+		}
+	}()
+
 	go func() {
 		<-ctx.Done()
 		if err := httpSrv.Shutdown(context.Background()); err != nil {
@@ -78,5 +91,10 @@ func run() error {
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	return nil
+	select {
+	case <-daemonDied:
+		return errors.New("livesync-cli daemon exited; restart to resume syncing")
+	default:
+		return nil
+	}
 }

@@ -76,6 +76,23 @@ func TestStopAfterProcessAlreadyExited(t *testing.T) {
 	}
 }
 
+func TestDoneClosesWhenProcessExits(t *testing.T) {
+	// A short-lived process: Done() must close once it exits on its own.
+	d := New("true", "/tmp/db", "/tmp/vault", 0)
+	d.args = []string{}
+	if err := d.Start(t.Context()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	select {
+	case <-d.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("Done() did not close after the process exited")
+	}
+	if d.Healthy() {
+		t.Fatal("daemon should not be healthy after its process exited")
+	}
+}
+
 func TestStartFailsForMissingBinary(t *testing.T) {
 	d := New("definitely-not-a-real-binary-xyz", "/tmp/db", "/tmp/vault", 0)
 	if err := d.Start(t.Context()); err == nil {

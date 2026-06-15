@@ -12,16 +12,28 @@ mkdir -p "$DB_DIR/.livesync"
 
 if [ ! -f "$SETTINGS_FILE" ]; then
     echo "[seed] generating settings -> $SETTINGS_FILE"
-    livesync-cli init-settings --force "$SETTINGS_FILE" >/dev/null
+    livesync-cli init-settings --force "$SETTINGS_FILE" >&2
 fi
 
 # Seed the CouchDB connection only if no remote is configured yet. Re-seeding on
 # every boot would re-trigger the CLI's sls+ migration and churn the settings.
-NEEDS_SEED=$(SETTINGS_FILE="$SETTINGS_FILE" node -e '
+# Fail hard if the settings file can't be inspected — otherwise an empty result
+# would silently skip seeding and the server would start without a remote.
+if ! NEEDS_SEED=$(SETTINGS_FILE="$SETTINGS_FILE" node -e '
 const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.env.SETTINGS_FILE,"utf8"));
 const hasRemote = !!d.couchDB_URI || (d.remoteConfigurations && Object.keys(d.remoteConfigurations).length>0);
 process.stdout.write(hasRemote ? "0" : "1");
-')
+'); then
+    echo "[seed] failed to inspect $SETTINGS_FILE" >&2
+    exit 1
+fi
+case "$NEEDS_SEED" in
+    0 | 1) ;;
+    *)
+        echo "[seed] unexpected settings inspection result: '$NEEDS_SEED'" >&2
+        exit 1
+        ;;
+esac
 
 if [ "$NEEDS_SEED" = "1" ]; then
     echo "[seed] seeding CouchDB connection"
