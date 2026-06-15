@@ -24,6 +24,26 @@ func main() {
 	}
 }
 
+// newHandler builds the HTTP handler: the MCP endpoint (read-only or full,
+// per cfg.ReadOnly, behind bearer auth) plus an unauthenticated /healthz that
+// reports the sync daemon's liveness via healthy.
+func newHandler(v *vault.Vault, cfg config.Config, healthy func() bool) http.Handler {
+	srv := mcpserver.New(v, cfg.ReadOnly)
+	mcpHandler := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return srv }, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		if !healthy() {
+			http.Error(w, "sync daemon down", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.Handle("/mcp", auth.RequireBearer(cfg.APIKey, mcpHandler))
+	return mux
+}
+
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
@@ -48,23 +68,9 @@ func run() error {
 		}
 	}()
 
-	srv := mcpserver.New(v, cfg.ReadOnly)
-	mcpHandler := mcp.NewStreamableHTTPHandler(
-		func(*http.Request) *mcp.Server { return srv }, nil)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		if !d.Healthy() {
-			http.Error(w, "sync daemon down", http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.Handle("/mcp", auth.RequireBearer(cfg.APIKey, mcpHandler))
-
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           mux,
+		Handler:           newHandler(v, cfg, d.Healthy),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	// If the sync daemon dies on its own, stop serving and exit non-zero so the
