@@ -35,7 +35,11 @@ func main() {
 	if err := d.Start(ctx); err != nil {
 		log.Fatalf("failed to start livesync-cli daemon: %v", err)
 	}
-	defer d.Stop()
+	defer func() {
+		if err := d.Stop(); err != nil {
+			log.Printf("error stopping livesync-cli daemon: %v", err)
+		}
+	}()
 
 	srv := mcpserver.New(v)
 	mcpHandler := mcp.NewStreamableHTTPHandler(

@@ -29,6 +29,30 @@ func TestStartRunsCommandAndReportsHealthy(t *testing.T) {
 	}
 }
 
+func TestStopAfterProcessAlreadyExited(t *testing.T) {
+	// Process exits on its own; Stop() must still return nil (treating the
+	// "already finished" Kill error as non-fatal) and not hang on <-done.
+	d := New("true", "/tmp/db", "/tmp/vault")
+	d.args = []string{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := d.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	// Wait for the process to exit and the watcher to mark it unhealthy.
+	deadline := time.Now().Add(2 * time.Second)
+	for d.Healthy() {
+		if time.Now().After(deadline) {
+			t.Fatal("process did not exit in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := d.Stop(); err != nil {
+		t.Fatalf("Stop() after natural exit = %v, want nil", err)
+	}
+}
+
 func TestStartFailsForMissingBinary(t *testing.T) {
 	d := New("definitely-not-a-real-binary-xyz", "/tmp/db", "/tmp/vault")
 	if err := d.Start(context.Background()); err == nil {

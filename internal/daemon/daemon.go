@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"sync"
@@ -69,7 +70,10 @@ func (d *Daemon) Stop() error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	if err := cmd.Process.Kill(); err != nil {
+	// On graceful shutdown the process may already be reaped (e.g. via a
+	// cancelled CommandContext); treat that as success and still wait for the
+	// watcher so Healthy() reliably reports false once Stop returns.
+	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}
 	<-done
