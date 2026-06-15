@@ -1,16 +1,31 @@
 // Package couch provides read-only conflict lookups against the remote CouchDB.
 //
 // It talks to CouchDB over plain HTTP (not the single-process leveldb the daemon
-// holds), so it can be queried live without pausing sync. LiveSync stores each
-// note as a CouchDB document whose _id is the **lowercased** vault path; this
-// package mirrors that so a lookup by vault path resolves to the right doc.
+// holds), so it can be queried live without pausing sync. To resolve a vault
+// path to its CouchDB document the package mirrors LiveSync's path→id scheme:
 //
-// Limitation: with end-to-end encryption enabled the document ids are obfuscated
-// (not the path), so conflict detection only works for non-encrypted vaults.
+//   - Normally the _id is the (case-folded) vault path.
+//   - With **path obfuscation** on, the _id is "f:" + SHA-256 of the passphrase
+//     hash and the path (see docID). This is purely a deterministic hash of
+//     path+passphrase — not per-document encryption — so given the passphrase we
+//     can compute it and conflict detection still works.
+//
+// Note: path obfuscation (usePathObfuscation) is independent of end-to-end
+// content encryption (encrypt). E2EE alone does not obfuscate the _id, so
+// plaintext-path lookups work for encrypted-but-not-obfuscated vaults too.
+//
+// WARNING: on an obfuscated vault a WRONG (but non-empty) passphrase derives a
+// valid-looking id that exists nowhere, which reads back as a 404 → "no conflict".
+// That is an unfalsifiable false all-clear, indistinguishable at the HTTP layer
+// from a genuinely conflict-free note. The empty-passphrase case is caught in
+// config.Load; a mismatched passphrase is the operator's responsibility — it must
+// match the vault.
 package couch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -27,38 +42,47 @@ type Client struct {
 	user string
 	pass string
 	db   string
-	hc   *http.Client
+	// obfuscatePassphrase mirrors LiveSync's obfuscatePassphrase: the passphrase
+	// when path obfuscation is enabled, empty otherwise. Empty = plaintext ids.
+	obfuscatePassphrase string
+	// caseInsensitive mirrors LiveSync's caseInsensitive (= !handleFilenameCaseSensitive):
+	// when true (the LiveSync default) paths are lowercased before id derivation.
+	caseInsensitive bool
+	hc              *http.Client
 }
 
 // New returns a Client, or nil if uri or db is empty (conflict detection
 // disabled). A nil *Client is safe to call — its Conflicts method returns no
 // conflicts — so callers don't have to special-case the disabled state.
-func New(uri, user, pass, db string) *Client {
+//
+// obfuscatePassphrase enables path-obfuscated id derivation when non-empty; it
+// must be the vault's passphrase and is only meaningful when the vault has
+// usePathObfuscation set. Pass "" for a non-obfuscated vault. caseInsensitive
+// must match the vault's id casing (true unless handleFilenameCaseSensitive is
+// set); LiveSync defaults it to true (paths lowercased).
+func New(uri, user, pass, db, obfuscatePassphrase string, caseInsensitive bool) *Client {
 	if uri == "" || db == "" {
 		return nil
 	}
 	return &Client{
-		base: strings.TrimRight(uri, "/"),
-		user: user,
-		pass: pass,
-		db:   db,
-		hc:   &http.Client{Timeout: 5 * time.Second},
+		base:                strings.TrimRight(uri, "/"),
+		user:                user,
+		pass:                pass,
+		db:                  db,
+		obfuscatePassphrase: obfuscatePassphrase,
+		caseInsensitive:     caseInsensitive,
+		hc:                  &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
-// Conflicts returns the conflicting revision ids for the note at notePath, or an
-// empty slice when there are none (or the document does not exist). A nil Client
+// Conflicts returns the conflicting revision ids for the note at notePath, or
+// nil when there are none (or the document does not exist). A nil Client
 // (conflict detection disabled) returns no conflicts without erroring.
 func (c *Client) Conflicts(ctx context.Context, notePath string) ([]string, error) {
 	if c == nil {
 		return nil, nil
 	}
-	// LiveSync's doc _id is the lowercased, cleaned vault path; clean it so a
-	// non-canonical spelling (./x, sub//x) maps to the same doc the vault writes.
-	// Escape it as a single path segment (slashes as %2F; CouchDB decodes %20 and
-	// other percent-escapes back to the literal id).
-	id := strings.ReplaceAll(url.PathEscape(strings.ToLower(path.Clean(notePath))), "/", "%2F")
-	endpoint := c.base + "/" + c.db + "/" + id + "?conflicts=true"
+	endpoint := c.base + "/" + c.db + "/" + c.docID(notePath) + "?conflicts=true"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
 	if err != nil {
@@ -103,4 +127,44 @@ func (c *Client) Conflicts(ctx context.Context, notePath string) ([]string, erro
 		return nil, fmt.Errorf("couchdb decode for %q: %w", notePath, err)
 	}
 	return doc.Conflicts, nil
+}
+
+// prefixObfuscated is LiveSync's PREFIX_OBFUSCATED: obfuscated document ids are
+// the path's hash with this prefix.
+const prefixObfuscated = "f:"
+
+// docID maps a vault path to the URL path segment for its CouchDB document.
+//
+// The path is cleaned (so ./x and sub//x map to the same doc the vault writes)
+// and, when caseInsensitive, lowercased — LiveSync lowercases ids unless
+// handleFilenameCaseSensitive is set, which defaults off.
+//
+//   - Plaintext (no obfuscation): the path, escaped as one segment (slashes as
+//     %2F; CouchDB decodes %20 and other percent-escapes back).
+//   - Obfuscated: "f:" + SHA256(SHA256(passphrase) + ":" + path), a deterministic
+//     mirror of LiveSync's path2id_base. The result is ASCII hex after the "f:"
+//     prefix, so it needs no escaping.
+func (c *Client) docID(notePath string) string {
+	clean := path.Clean(notePath)
+	if c.caseInsensitive {
+		clean = strings.ToLower(clean)
+	}
+	if c.obfuscatePassphrase == "" {
+		return strings.ReplaceAll(url.PathEscape(clean), "/", "%2F")
+	}
+	// Only the path is case-folded; the passphrase is hashed verbatim (it is
+	// case-significant in LiveSync). Do not lowercase it.
+	hashedPassphrase := sha256Hex(c.obfuscatePassphrase)
+	return prefixObfuscated + sha256Hex(hashedPassphrase+":"+clean)
+}
+
+// sha256Hex returns the lowercase hex SHA-256 of s. This mirrors LiveSync's
+// hashString (livesync-commonlib string_and_binary/path.ts, verified at
+// vrtmrz/obsidian-livesync@1a1f816 / commonlib 5a552b3): its "stretching" loop
+// re-hashes the original input each iteration rather than the running digest, so
+// it reduces to a single SHA-256. TestObfuscatedConflictDetection guards against
+// upstream drift by checking a real daemon stores docs at the derived id.
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }

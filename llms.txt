@@ -66,7 +66,8 @@ MCP_API_KEY=secret \
 | `READ_ONLY`        | no       | `false`          | When `true`, only read tools are exposed (no write/append/delete/move) |
 | `COUCHDB_URI` / `COUCHDB_USER` / `COUCHDB_PASSWORD` / `COUCHDB_DBNAME` | no | — | Enable conflict detection (the Docker image sets these) |
 | `COUCHDB_PASSPHRASE` | no | _(empty)_ | E2EE passphrase; must match the vault |
-| `USE_PATH_OBFUSCATION` | no | `false` | Must match the vault's "Use path obfuscation" setting (see below) |
+| `USE_PATH_OBFUSCATION` | no | `false` | Must match the vault's "Use path obfuscation" setting (see below); requires `COUCHDB_PASSPHRASE` |
+| `HANDLE_FILENAME_CASE_SENSITIVE` | no | `false` | Must match the vault's setting of the same name; affects conflict-lookup doc ids |
 
 ## MCP tools
 
@@ -98,8 +99,12 @@ absolute paths, `..` traversal, and symlinks escaping the vault are rejected.
   array plus `conflictCheck` (`ok`|`unavailable`|`disabled`), and
   `write_note`/`append_to_note` refuse to edit a conflicted note. Before editing
   a note you didn't just create, check `get_note_metadata` and treat
-  `conflicts: []` as safe only when `conflictCheck` is `ok`. Only works for
-  non-E2EE vaults (encrypted vaults obfuscate the doc ids).
+  `conflicts: []` as safe only when `conflictCheck` is `ok`. On a path-obfuscated
+  vault, set `USE_PATH_OBFUSCATION=true` + `COUCHDB_PASSPHRASE` and it works as
+  normal (the server derives the obfuscated doc id from the passphrase). Caveat: a
+  wrong passphrase (or mismatched `HANDLE_FILENAME_CASE_SENSITIVE`) on an obfuscated
+  vault derives a non-existent id → false `conflictCheck: ok`; both must match the
+  vault. Empty passphrase with obfuscation on is rejected at startup.
 
 ## Verify
 

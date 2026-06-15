@@ -31,7 +31,8 @@ func main() {
 func newHandler(v *vault.Vault, cfg config.Config, healthy func() bool) http.Handler {
 	// Conflict detection is optional: nil checker when CouchDB isn't configured.
 	var checker mcpserver.ConflictChecker
-	if cc := couch.New(cfg.CouchURI, cfg.CouchUser, cfg.CouchPassword, cfg.CouchDBName); cc != nil {
+	obfuscatePassphrase, caseInsensitive := cfg.ConflictIDParams()
+	if cc := couch.New(cfg.CouchURI, cfg.CouchUser, cfg.CouchPassword, cfg.CouchDBName, obfuscatePassphrase, caseInsensitive); cc != nil {
 		checker = cc
 	}
 	srv := mcpserver.New(v, cfg.ReadOnly, checker)

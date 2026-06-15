@@ -60,7 +60,8 @@ All configuration is via environment variables:
 | `COUCHDB_PASSWORD`| no      | —                  | CouchDB password for conflict queries |
 | `COUCHDB_DBNAME` | no       | —                  | CouchDB database name |
 | `COUCHDB_PASSPHRASE` | no   | _(empty)_          | E2EE passphrase; empty disables encryption. Must match the vault |
-| `USE_PATH_OBFUSCATION` | no | `false`            | Must match the vault's "Use path obfuscation" setting (see below) |
+| `USE_PATH_OBFUSCATION` | no | `false`            | Must match the vault's "Use path obfuscation" setting (see below). Requires `COUCHDB_PASSPHRASE` |
+| `HANDLE_FILENAME_CASE_SENSITIVE` | no | `false`   | Must match the vault's setting of the same name; affects conflict-lookup doc ids |
 
 (The Docker image already passes the `COUCHDB_*` values, so conflict detection
 works out of the box there.)
@@ -167,8 +168,17 @@ over HTTP — no daemon pause needed. It's scoped to the note being touched:
 
 Note: a conflict caused by your own write isn't visible immediately (it
 materialises after the daemon pushes), so it surfaces on the *next* read.
-Detection relies on the CouchDB doc id being the note path; with **E2EE enabled**
-the ids are obfuscated, so conflict detection only works for non-encrypted vaults.
+Detection maps the note path to its CouchDB doc id. On a **path-obfuscated**
+vault that id is a hash, so set `USE_PATH_OBFUSCATION=true` and `COUCHDB_PASSPHRASE`
+to the vault's passphrase — the server then derives the obfuscated id and conflict
+detection works as normal. (Plain E2EE encryption without path obfuscation leaves
+the id as the plaintext path, so it needs no extra configuration.)
+
+> **Caveat:** on an obfuscated vault, a *wrong* `COUCHDB_PASSPHRASE` (or a
+> mismatched `HANDLE_FILENAME_CASE_SENSITIVE`) derives a doc id that exists
+> nowhere, which looks identical to "no conflict" — every note then reports a
+> false `conflictCheck: "ok"`. Make sure both match the vault. An empty
+> passphrase with obfuscation on is rejected at startup.
 
 ## Example MCP client config
 

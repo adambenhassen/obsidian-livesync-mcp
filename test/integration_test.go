@@ -4,18 +4,22 @@ package test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/adambenhassen/obsidian-livesync-mcp/internal/couch"
 	"github.com/adambenhassen/obsidian-livesync-mcp/internal/daemon"
 	"github.com/adambenhassen/obsidian-livesync-mcp/internal/vault"
 )
@@ -353,6 +357,167 @@ func TestPathObfuscatedVaultSyncsContent(t *testing.T) {
 	}
 	if got != body {
 		t.Fatalf("pulled content = %q, want %q (empty = the obfuscation bug)", got, body)
+	}
+}
+
+// TestObfuscatedConflictDetection is the golden proof that conflict detection
+// works under path obfuscation: the production couch client, given the vault's
+// passphrase, derives the same obfuscated document id the real daemon writes and
+// detects an injected conflict on it.
+//
+// The transitive guarantee: a conflict is injected at the id the test computes
+// from LiveSync's algorithm, and that id is first confirmed to be the daemon's
+// actual doc (getDocByID found). The production client is then asked for
+// conflicts BY PLAINTEXT PATH; it sees the injection only if its own id
+// derivation matches. So daemon-id == reference-id == production-id, end to end.
+func TestObfuscatedConflictDetection(t *testing.T) {
+	requireIT(t)
+	db := fmt.Sprintf("obf-conflict-%d", time.Now().UnixNano())
+	cc := newCouch(t)
+	cc.db = db
+	cc.createDB(t)
+	t.Cleanup(func() { cc.dropDB(t) })
+
+	const passphrase = "integration-obfuscation-passphrase"
+	obfuscate := func(m map[string]any) {
+		m["couchDB_DBNAME"] = db
+		m["usePathObfuscation"] = true
+		m["encrypt"] = true
+		m["passphrase"] = passphrase
+	}
+
+	dbDir, vaultDir := t.TempDir(), t.TempDir()
+	seedDB(t, dbDir, obfuscate)
+	startDaemon(t, dbDir, vaultDir)
+	time.Sleep(3 * time.Second) // let the initial mirror scan settle
+
+	v, err := vault.New(vaultDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("obf-conflict-%d.md", time.Now().UnixNano())
+	before := cc.totalDocs(t)
+	if err := v.Write(name, "body behind obfuscation", true); err != nil {
+		t.Fatal(err)
+	}
+	if !cc.waitForDocCount(t, before+1, 20*time.Second) {
+		t.Fatalf("obfuscated note %q never propagated to CouchDB", name)
+	}
+
+	// The daemon must have stored the doc at exactly the id our reference
+	// algorithm computes — the golden match.
+	id := referenceObfuscatedID(passphrase, name)
+	if _, found := cc.getDocByID(t, id); !found {
+		t.Fatalf("daemon did not store %q at computed obfuscated id %q", name, id)
+	}
+
+	// Inject a conflicting (losing) revision onto that doc.
+	cc.injectConflict(t, id)
+
+	// Production path: ask by PLAINTEXT path; the client must derive the same id
+	// and surface the conflict.
+	client := couch.New(cc.base, cc.user, cc.pass, db, passphrase, true)
+	conflicts, err := client.Conflicts(t.Context(), name)
+	if err != nil {
+		t.Fatalf("Conflicts: %v", err)
+	}
+	if !slices.Contains(conflicts, injectedConflictRev) {
+		t.Fatalf("expected injected conflict %q on obfuscated note %q, got %v",
+			injectedConflictRev, name, conflicts)
+	}
+}
+
+// referenceObfuscatedID computes LiveSync's obfuscated document id independently
+// of the production code, so the test binds the production client to the
+// daemon's behavior rather than to itself.
+func referenceObfuscatedID(passphrase, notePath string) string {
+	lower := strings.ToLower(path.Clean(notePath))
+	hp := sha256.Sum256([]byte(passphrase))
+	inner := hex.EncodeToString(hp[:])
+	full := sha256.Sum256([]byte(inner + ":" + lower))
+	return "f:" + hex.EncodeToString(full[:])
+}
+
+// getDocByID fetches a document by its raw CouchDB id, reporting its revision and
+// existence. Unlike getDoc it does no path→id mapping — the id is used verbatim.
+func (c *couchClient) getDocByID(t *testing.T, id string) (rev string, found bool) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, c.base+"/"+c.db+"/"+id, http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.user != "" {
+		req.SetBasicAuth(c.user, c.pass)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		// A transport failure is not "not found"; fail loudly so it can't be
+		// misread as the daemon storing the doc under a different id.
+		t.Fatalf("getDocByID %q: %v", id, err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			t.Logf("couch body close: %v", cerr)
+		}
+	}()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", false
+	}
+	var doc struct {
+		Rev string `json:"_rev"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatalf("getDocByID %q decode: %v", id, err)
+	}
+	return doc.Rev, true
+}
+
+// injectedConflictRev is a generation-1, near-minimal revid: CouchDB always
+// picks the daemon's real revision as the winner, so this one is the losing leaf
+// that surfaces in _conflicts.
+const injectedConflictRev = "1-0000000000000000000000000000dead"
+
+// injectConflict adds a divergent (losing) revision to the document at id via a
+// new_edits=false bulk write, creating an unresolved conflict regardless of which
+// branch CouchDB picks as the winner.
+func (c *couchClient) injectConflict(t *testing.T, id string) {
+	t.Helper()
+	body := fmt.Sprintf(`{"new_edits":false,"docs":[{"_id":%q,"_rev":%q,"deleted":false}]}`, id, injectedConflictRev)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, c.base+"/"+c.db+"/_bulk_docs", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.user != "" {
+		req.SetBasicAuth(c.user, c.pass)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		t.Fatalf("inject conflict: %v", err)
+	}
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			t.Logf("couch body close: %v", cerr)
+		}
+	}()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		t.Fatalf("inject conflict: status %d", resp.StatusCode)
+	}
+	// _bulk_docs returns 201 even when individual docs are rejected. With
+	// new_edits=false the array carries only the failures, so any element with an
+	// error means the conflict revision was not actually stored.
+	var results []struct {
+		ID     string `json:"id"`
+		Error  string `json:"error"`
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		t.Fatalf("inject conflict: decode response: %v", err)
+	}
+	for _, r := range results {
+		if r.Error != "" {
+			t.Fatalf("inject conflict: doc %q rejected: %s (%s)", r.ID, r.Error, r.Reason)
+		}
 	}
 }
 
