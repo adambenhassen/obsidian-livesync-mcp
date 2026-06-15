@@ -8,7 +8,14 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
+	"syscall"
+	"time"
 )
+
+// stopGrace bounds how long Stop (and a cancelled context) waits for the CLI to
+// exit after SIGTERM before escalating to SIGKILL. The CLI restores its settings
+// file during a graceful (SIGTERM/SIGINT) shutdown; a hard kill skips that.
+const stopGrace = 5 * time.Second
 
 // Daemon supervises a `livesync-cli <db> daemon --vault <vault>` subprocess.
 type Daemon struct {
@@ -48,6 +55,11 @@ func (d *Daemon) Start(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, d.bin, d.args...) //nolint:gosec // G204: configured CLI, not user input
 	cmd.Stdout = os.Stderr                            // CLI logs → our stderr
 	cmd.Stderr = os.Stderr
+	// On context cancellation, terminate the CLI gracefully (SIGTERM) instead of
+	// the os/exec default SIGKILL, so it can restore its settings file on exit;
+	// WaitDelay escalates to SIGKILL if it doesn't exit within stopGrace.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = stopGrace
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -92,7 +104,9 @@ func (d *Daemon) Healthy() bool {
 }
 
 // Stop terminates the supervised process and waits for the watcher to mark it
-// stopped, so Healthy() reliably reports false once Stop returns.
+// stopped, so Healthy() reliably reports false once Stop returns. It first asks
+// the CLI to exit gracefully (SIGTERM) so it can restore its settings file, then
+// escalates to SIGKILL if the process does not exit within stopGrace.
 func (d *Daemon) Stop() error {
 	d.mu.Lock()
 	cmd := d.cmd
@@ -102,9 +116,21 @@ func (d *Daemon) Stop() error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	// On graceful shutdown the process may already be reaped (e.g. via a
-	// cancelled CommandContext); treat that as success and still wait for the
-	// watcher so Healthy() reliably reports false once Stop returns.
+	// The process may already be reaped (natural exit, or a cancelled
+	// CommandContext that already fired cmd.Cancel); a signal then returns
+	// ErrProcessDone — treat that as success and just wait for the watcher.
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			<-done
+			return nil
+		}
+		return err
+	}
+	select {
+	case <-done:
+		return nil
+	case <-time.After(stopGrace):
+	}
 	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
 	}

@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -97,5 +99,49 @@ func TestStartFailsForMissingBinary(t *testing.T) {
 	d := New("definitely-not-a-real-binary-xyz", "/tmp/db", "/tmp/vault", 0)
 	if err := d.Start(t.Context()); err == nil {
 		t.Fatal("expected error starting missing binary")
+	}
+}
+
+func TestStopSignalsGracefully(t *testing.T) {
+	// Stop must deliver SIGTERM (not just SIGKILL) so the CLI can run its
+	// shutdown handler and restore its settings file. Use a script that traps
+	// TERM, records that it caught it, then exits.
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "ready")
+	caught := filepath.Join(dir, "caught")
+	script := filepath.Join(dir, "graceful.sh")
+	body := "#!/bin/sh\n" +
+		"trap 'touch \"" + caught + "\"; exit 0' TERM\n" +
+		"touch \"" + ready + "\"\n" +
+		"while true; do sleep 0.05; done\n"
+	// Run via `/bin/sh <script>`, so the file only needs to be readable.
+	if err := os.WriteFile(script, []byte(body), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	d := New("/bin/sh", "/tmp/db", "/tmp/vault", 0)
+	d.args = []string{script}
+	if err := d.Start(t.Context()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+
+	// Wait until the trap is installed before signalling, so SIGTERM can't race
+	// ahead of the handler.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("script did not become ready in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if err := d.Stop(); err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if _, err := os.Stat(caught); err != nil {
+		t.Fatalf("expected SIGTERM handler to run (caught marker missing): %v", err)
 	}
 }
