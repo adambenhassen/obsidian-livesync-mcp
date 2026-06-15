@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ErrPathEscape is returned when a note path resolves outside the vault root.
@@ -127,4 +128,78 @@ func (v *Vault) Move(from, to string) error {
 		return err
 	}
 	return os.Rename(src, dst)
+}
+
+// Note describes a single note's metadata. Path is vault-relative, slashed.
+type Note struct {
+	Path    string    `json:"path"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"modTime"`
+}
+
+func (v *Vault) toNote(abs string, info os.FileInfo) (Note, error) {
+	rel, err := filepath.Rel(v.root, abs)
+	if err != nil {
+		return Note{}, err
+	}
+	return Note{
+		Path:    filepath.ToSlash(rel),
+		Size:    info.Size(),
+		ModTime: info.ModTime(),
+	}, nil
+}
+
+// List returns .md notes under folder. If recursive is false, only direct
+// children are returned. folder "" means the vault root.
+func (v *Vault) List(folder string, recursive bool) ([]Note, error) {
+	base := v.root
+	if folder != "" {
+		abs, err := v.resolve(folder)
+		if err != nil {
+			return nil, err
+		}
+		base = abs
+	}
+	var notes []Note
+	walk := func(abs string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if !recursive && abs != base {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(abs) != ".md" {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		n, err := v.toNote(abs, info)
+		if err != nil {
+			return err
+		}
+		notes = append(notes, n)
+		return nil
+	}
+	if err := filepath.WalkDir(base, walk); err != nil {
+		return nil, err
+	}
+	return notes, nil
+}
+
+// Metadata returns metadata for a single note.
+func (v *Vault) Metadata(rel string) (Note, error) {
+	abs, err := v.resolve(rel)
+	if err != nil {
+		return Note{}, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return Note{}, err
+	}
+	return v.toNote(abs, info)
 }
