@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" font-family="ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-label="obsidian-livesync-mcp">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b1726"/>
+      <stop offset="0.55" stop-color="#2a2140"/>
+      <stop offset="1" stop-color="#4b2e83"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a98bff"/>
+      <stop offset="1" stop-color="#7c5cff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="320" rx="20" fill="url(#bg)"/>
+  <rect x="0" y="0" width="10" height="320" fill="url(#accent)"/>
+
+  <!-- Obsidian-style gem mark -->
+  <g transform="translate(78,86)">
+    <polygon points="70,0 120,44 96,150 44,150 20,44" fill="url(#accent)" opacity="0.95"/>
+    <polygon points="70,0 120,44 70,66 20,44" fill="#ffffff" opacity="0.22"/>
+    <polygon points="70,66 96,150 44,150" fill="#ffffff" opacity="0.10"/>
+  </g>
+
+  <text x="250" y="118" font-size="58" font-weight="700" fill="#f4f1ff">obsidian-livesync-mcp</text>
+  <text x="252" y="160" font-size="24" fill="#c9bfe8">An MCP server for reading &amp; writing an Obsidian vault</text>
+  <text x="252" y="190" font-size="24" fill="#c9bfe8">synced by Self-hosted LiveSync</text>
+
+  <!-- pills -->
+  <g font-family="ui-monospace, SF Mono, Menlo, Consolas, monospace" font-size="18" font-weight="600" fill="#d9cffb">
+    <g transform="translate(252,214)">
+      <rect x="0"   y="0" width="58"  height="34" rx="17" fill="#ffffff" opacity="0.08"/>
+      <text x="29"  y="23" text-anchor="middle">Go</text>
+      <rect x="70"  y="0" width="74"  height="34" rx="17" fill="#ffffff" opacity="0.08"/>
+      <text x="107" y="23" text-anchor="middle">MCP</text>
+      <rect x="156" y="0" width="128" height="34" rx="17" fill="#ffffff" opacity="0.08"/>
+      <text x="220" y="23" text-anchor="middle">CouchDB</text>
+    </g>
+  </g>
+
+  <!-- mini architecture flow -->
+  <g font-family="ui-monospace, SF Mono, Menlo, Consolas, monospace" font-size="19" font-weight="600" fill="#e9e2ff">
+    <g transform="translate(760,236)">
+      <rect x="0"   y="0" width="120" height="40" rx="10" fill="#ffffff" opacity="0.07"/>
+      <text x="60"  y="25" text-anchor="middle">agent</text>
+      <text x="128" y="25" fill="#a98bff" text-anchor="middle">&#8594;</text>
+      <rect x="142" y="0" width="120" height="40" rx="10" fill="#ffffff" opacity="0.07"/>
+      <text x="202" y="25" text-anchor="middle">mcp</text>
+      <text x="270" y="25" fill="#a98bff" text-anchor="middle">&#8594;</text>
+      <rect x="284" y="0" width="120" height="40" rx="10" fill="#ffffff" opacity="0.07"/>
+      <text x="344" y="25" text-anchor="middle">vault</text>
+    </g>
+  </g>
+</svg>

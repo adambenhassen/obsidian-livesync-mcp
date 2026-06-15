@@ -1,4 +1,10 @@
-# livesync-mcp
+<p align="center">
+  <img src="assets/banner.svg" alt="obsidian-livesync-mcp" width="100%">
+</p>
+
+# obsidian-livesync-mcp
+
+[![CI](https://github.com/adambenhassen/obsidian-livesync-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/adambenhassen/obsidian-livesync-mcp/actions/workflows/ci.yml)
 
 A standalone **MCP HTTP server** (Go) that lets AI agents read and write an
 Obsidian vault synced by [Self-hosted LiveSync](https://github.com/vrtmrz/obsidian-livesync).
