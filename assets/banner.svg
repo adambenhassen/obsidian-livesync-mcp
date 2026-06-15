@@ -12,7 +12,6 @@
   </defs>
 
   <rect width="1200" height="320" rx="20" fill="url(#bg)"/>
-  <rect x="0" y="0" width="10" height="320" fill="url(#accent)"/>
 
   <!-- Obsidian-style gem mark -->
   <g transform="translate(78,86)">
