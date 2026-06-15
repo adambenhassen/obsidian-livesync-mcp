@@ -5,6 +5,7 @@ package test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -424,6 +425,214 @@ func TestObfuscatedConflictDetection(t *testing.T) {
 	if !slices.Contains(conflicts, injectedConflictRev) {
 		t.Fatalf("expected injected conflict %q on obfuscated note %q, got %v",
 			injectedConflictRev, name, conflicts)
+	}
+}
+
+// TestSeedScriptBase64PassphraseSurvivesRestart proves the stock Docker
+// entrypoint needs NO custom wrapper to handle a base64-encoded E2EE passphrase,
+// even across a restart. It runs the real deploy/seed-settings.sh with ONLY
+// COUCHDB_PASSPHRASE_B64 set (no plaintext) against a path-obfuscated E2EE vault
+// and checks the two gaps the fix closes:
+//
+//  1. gap 1 — the script must base64-decode COUCHDB_PASSPHRASE_B64 (mirroring
+//     internal/config) instead of seeding an empty passphrase; verified at the
+//     settings level and end-to-end (a note reads back non-empty, not 0 bytes).
+//  2. gap 2 — the daemon's sls+ migration drops the top-level passphrase after
+//     the first run, so re-running the seed step (a container restart) must
+//     re-assert it. To test this deterministically (the real migration's timing
+//     is unreliable within a test window), the test simulates the drop directly,
+//     then re-seeds and asserts the passphrase is restored, and finally restarts
+//     the daemon and confirms the note is still non-empty.
+//
+// Gap 1's first-seed assertion fails on the unfixed script (it never decoded the
+// B64 var → empty passphrase → 0-byte note). Gap 2's post-restart assertion fails
+// on a script that seeds E2EE only once (the simulated drop is never restored).
+func TestSeedScriptBase64PassphraseSurvivesRestart(t *testing.T) {
+	requireIT(t)
+	const passphrase = "integration-obfuscation-passphrase"
+	const body = "content seeded from a base64 passphrase"
+	b64 := base64.StdEncoding.EncodeToString([]byte(passphrase))
+
+	db := fmt.Sprintf("seed-b64-%d", time.Now().UnixNano())
+	cc := newCouch(t)
+	cc.db = db
+	cc.createDB(t)
+	t.Cleanup(func() { cc.dropDB(t) })
+
+	// Only the B64 var — no plaintext COUCHDB_PASSPHRASE — so this exercises the
+	// decode path a B64-only deployment relies on.
+	seedEnv := []string{
+		"COUCHDB_PASSPHRASE_B64=" + b64,
+		"USE_PATH_OBFUSCATION=true",
+	}
+	dbDir, vaultDir := t.TempDir(), t.TempDir()
+
+	// First boot: seed from B64 alone; the decoded passphrase must land verbatim.
+	seedDBViaScript(t, dbDir, db, seedEnv...)
+	if got := readSetting(t, dbDir, "passphrase"); got != passphrase {
+		t.Fatalf("first seed: passphrase = %v, want %q (COUCHDB_PASSPHRASE_B64 not decoded)", got, passphrase)
+	}
+	if got := readSetting(t, dbDir, "usePathObfuscation"); got != true {
+		t.Fatalf("first seed: usePathObfuscation = %v, want true", got)
+	}
+
+	d := startDaemon(t, dbDir, vaultDir)
+	time.Sleep(3 * time.Second) // let the initial mirror scan settle
+
+	v, err := vault.New(vaultDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("seed-b64-%d.md", time.Now().UnixNano())
+	before := cc.totalDocs(t)
+	if err := v.Write(name, body, true); err != nil {
+		t.Fatal(err)
+	}
+	if !cc.waitForDocCount(t, before+1, 20*time.Second) {
+		t.Fatalf("note %q never propagated to CouchDB", name)
+	}
+	// Obfuscation/E2EE must actually have engaged (doc not stored at the plaintext
+	// id) — otherwise the passphrase was irrelevant and the test proves nothing.
+	if _, _, found := cc.getDoc(t, name); found {
+		t.Fatalf("note %q stored at its plaintext id; obfuscation/E2EE did not engage", name)
+	}
+	if err := d.Stop(); err != nil {
+		t.Fatalf("stop daemon: %v", err)
+	}
+
+	// Simulate the sls+ migration dropping the top-level passphrase (its real
+	// timing is unreliable within a test window). This is the precondition gap 2
+	// guards against; doing it deterministically makes the re-assert below a real
+	// regression sentinel rather than one that only fires if the migration raced.
+	t.Logf("passphrase before simulated migration drop = %v", readSetting(t, dbDir, "passphrase"))
+	dropPassphrase(t, dbDir)
+	if got := readSetting(t, dbDir, "passphrase"); got != nil && got != "" {
+		t.Fatalf("precondition: passphrase not dropped, got %v", got)
+	}
+
+	// Restart: re-run the entrypoint's seed step. The CouchDB connection is
+	// already configured (no re-seed), but E2EE must be re-asserted every boot.
+	seedDBViaScript(t, dbDir, db, seedEnv...)
+	if got := readSetting(t, dbDir, "passphrase"); got != passphrase {
+		t.Fatalf("after restart: passphrase = %v, want %q (E2EE not re-asserted on reboot)", got, passphrase)
+	}
+
+	// Restart the daemon against the SAME db + vault. With the passphrase
+	// re-asserted the note stays intact; the regression rewrote it as 0 bytes.
+	startDaemon(t, dbDir, vaultDir)
+	time.Sleep(4 * time.Second) // give the restart mirror time to (over)write
+	got, err := v.Read(name)
+	if err != nil {
+		t.Fatalf("note %q unreadable after restart: %v", name, err)
+	}
+	if got != body {
+		t.Fatalf("after restart: content = %q, want %q (empty = the 0-byte regression)", got, body)
+	}
+}
+
+// TestSeedScriptRejectsInvalidBase64 guards the strict-base64 contract: the seed
+// script must reject any COUCHDB_PASSPHRASE_B64 that Go's base64.StdEncoding would
+// reject, so the daemon seed and the Go server never derive different passphrases.
+// A lenient decode (GNU base64 -d) would silently accept these and, for the
+// whitespace-only case, seed an empty passphrase — the 0-byte-file regression.
+func TestSeedScriptRejectsInvalidBase64(t *testing.T) {
+	requireIT(t)
+	if _, err := os.Stat(seedSettingsScript); err != nil {
+		t.Skipf("seed-settings.sh not found at %s: %v", seedSettingsScript, err)
+	}
+	cases := map[string]string{
+		"garbage":         "!!!not base64!!!",
+		"whitespace-only": " \n ",
+		"missing-padding": "aGVsbG8",   // "hello" without the trailing '='
+		"embedded-space":  "aGVs bG8=", // canonical bytes split by a space
+	}
+	for name, b64 := range cases {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.CommandContext(t.Context(), "sh", seedSettingsScript)
+			cmd.Env = append(os.Environ(),
+				"LIVESYNC_DB="+t.TempDir(),
+				"COUCHDB_PASSPHRASE_B64="+b64,
+				"USE_PATH_OBFUSCATION=true",
+			)
+			if out, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("expected non-zero exit for invalid base64 %q, got success:\n%s", b64, out)
+			}
+		})
+	}
+}
+
+// seedSettingsScript is where the Docker image installs deploy/seed-settings.sh;
+// the e2e test stage runs from there.
+const seedSettingsScript = "/usr/local/bin/seed-settings.sh"
+
+// seedDBViaScript runs the real deploy/seed-settings.sh against dbDir, exercising
+// the production seeding path (base64 decode + the always-on E2EE re-assert)
+// instead of the in-test seedDB shortcut. The test skips if the script is absent
+// (i.e. running outside the e2e image). extraEnv entries (e.g.
+// COUCHDB_PASSPHRASE_B64) are appended last so they win over anything inherited.
+func seedDBViaScript(t *testing.T, dbDir, dbName string, extraEnv ...string) {
+	t.Helper()
+	script := seedSettingsScript
+	if _, err := os.Stat(script); err != nil {
+		t.Skipf("seed-settings.sh not found at %s: %v", script, err)
+	}
+	uri := os.Getenv("COUCHDB_URI")
+	if uri == "" {
+		uri = os.Getenv("COUCHDB_URL")
+	}
+	if uri == "" {
+		t.Fatal("COUCHDB_URI (or COUCHDB_URL) must be set to seed via the script")
+	}
+	cmd := exec.CommandContext(t.Context(), "sh", script)
+	cmd.Env = append(os.Environ(),
+		"LIVESYNC_DB="+dbDir,
+		"COUCHDB_URI="+uri,
+		"COUCHDB_USER="+os.Getenv("COUCHDB_USER"),
+		"COUCHDB_PASSWORD="+os.Getenv("COUCHDB_PASSWORD"),
+		"COUCHDB_DBNAME="+dbName,
+	)
+	cmd.Env = append(cmd.Env, extraEnv...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("seed-settings.sh: %v\n%s", err, out)
+	}
+}
+
+// readSetting returns a single key from dbDir's .livesync/settings.json.
+func readSetting(t *testing.T, dbDir, key string) any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dbDir, ".livesync", "settings.json"))
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	return m[key]
+}
+
+// dropPassphrase rewrites dbDir's settings.json without the top-level passphrase
+// and with encrypt=false, reproducing what LiveSync's sls+ startup migration does
+// after the first run. Lets the restart re-assert be tested deterministically.
+func dropPassphrase(t *testing.T, dbDir string) {
+	t.Helper()
+	path := filepath.Join(dbDir, ".livesync", "settings.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	delete(m, "passphrase")
+	m["encrypt"] = false
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		t.Fatalf("encode settings: %v", err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatalf("write settings: %v", err)
 	}
 }
 
