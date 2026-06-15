@@ -60,6 +60,7 @@ All configuration is via environment variables:
 | `COUCHDB_PASSWORD`| no      | —                  | CouchDB password for conflict queries |
 | `COUCHDB_DBNAME` | no       | —                  | CouchDB database name |
 | `COUCHDB_PASSPHRASE` | no   | _(empty)_          | E2EE passphrase; empty disables encryption. Must match the vault |
+| `COUCHDB_PASSPHRASE_B64` | no | _(empty)_        | Same as `COUCHDB_PASSPHRASE` but standard padded base64; when set it is decoded and **overrides** `COUCHDB_PASSPHRASE`. Honored by both the daemon seed and the Go server. Invalid base64 is fatal |
 | `USE_PATH_OBFUSCATION` | no | `false`            | Must match the vault's "Use path obfuscation" setting (see below). Requires `COUCHDB_PASSPHRASE` |
 
 (The Docker image already passes the `COUCHDB_*` values, so conflict detection
