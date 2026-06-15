@@ -13,7 +13,8 @@ var ErrPathEscape = errors.New("note path escapes vault root")
 
 // Vault provides filesystem CRUD over notes under a single root directory.
 type Vault struct {
-	root string // absolute, cleaned
+	root     string // absolute, cleaned (used to build/return note paths)
+	realRoot string // root with all symlinks resolved (used for containment)
 }
 
 // New validates that root exists and is a directory, then returns a Vault.
@@ -29,7 +30,11 @@ func New(root string) (*Vault, error) {
 	if !info.IsDir() {
 		return nil, errors.New("vault root is not a directory")
 	}
-	return &Vault{root: abs}, nil
+	realRoot, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return nil, err
+	}
+	return &Vault{root: abs, realRoot: realRoot}, nil
 }
 
 // resolve converts a vault-relative, forward-slashed note path into a safe
@@ -44,12 +49,52 @@ func (v *Vault) resolve(rel string) (string, error) {
 		return "", ErrPathEscape
 	}
 	abs := filepath.Join(v.root, clean)
-	// Defence in depth: confirm the joined path is still under the root.
+	// Lexical containment: confirm the joined path is still under the root.
 	check, err := filepath.Rel(v.root, abs)
 	if err != nil || check == ".." || strings.HasPrefix(check, ".."+string(filepath.Separator)) {
 		return "", ErrPathEscape
 	}
+	// Symlink-aware containment: a lexical check alone is bypassable by a
+	// symlink inside the vault that points outside it. The vault is mutated by
+	// an external sync process, so such symlinks are attacker-influenceable.
+	// Resolve symlinks on the longest existing ancestor and confirm the real
+	// target stays under the real root.
+	realPath, err := evalExisting(abs)
+	if err != nil {
+		return "", err
+	}
+	if realPath != v.realRoot && !strings.HasPrefix(realPath, v.realRoot+string(filepath.Separator)) {
+		return "", ErrPathEscape
+	}
 	return abs, nil
+}
+
+// evalExisting resolves symlinks on the longest existing prefix of p and
+// re-appends the remaining (not-yet-created) suffix lexically. This lets a
+// write target that does not exist yet still be checked for symlink escape via
+// its existing parent directories.
+func evalExisting(p string) (string, error) {
+	var suffix []string
+	cur := p
+	for {
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			full := resolved
+			for i := len(suffix) - 1; i >= 0; i-- {
+				full = filepath.Join(full, suffix[i])
+			}
+			return full, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", err // reached filesystem root without an existing prefix
+		}
+		suffix = append(suffix, filepath.Base(cur))
+		cur = parent
+	}
 }
 
 // ErrExists is returned by Write when overwrite is false and the note exists.
