@@ -64,6 +64,7 @@ MCP_API_KEY=secret \
 | `MCP_ADDR`         | no       | `127.0.0.1:8765` | HTTP listen address |
 | `MCP_API_KEY`      | no       | _(empty)_        | Bearer token; empty disables auth |
 | `READ_ONLY`        | no       | `false`          | When `true`, only read tools are exposed (no write/append/delete/move) |
+| `COUCHDB_URI` / `COUCHDB_USER` / `COUCHDB_PASSWORD` / `COUCHDB_DBNAME` | no | — | Enable conflict detection (the Docker image sets these) |
 
 ## MCP tools
 
@@ -87,6 +88,10 @@ absolute paths, `..` traversal, and symlinks escaping the vault are rejected.
   `test/integration_test.go`.
 - Deletes propagate as LiveSync **soft-delete tombstones** (the CouchDB doc body
   gains `"deleted": true`; the doc is not removed via CouchDB native `_deleted`).
+- **Conflicts:** with `COUCHDB_*` set, `get_note_metadata` returns a `conflicts`
+  array and `write_note`/`append_to_note` refuse to edit a conflicted note. Check
+  `get_note_metadata` before editing a note you didn't just create. Only works
+  for non-E2EE vaults (encrypted vaults obfuscate the doc ids).
 
 ## Verify
 

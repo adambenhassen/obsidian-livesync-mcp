@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -39,10 +40,23 @@ func firstText(t *testing.T, res *mcp.CallToolResult) string {
 	return tc.Text
 }
 
+// fakeChecker is a stub ConflictChecker for tests.
+type fakeChecker struct {
+	conflicts map[string][]string
+	err       error
+}
+
+func (f fakeChecker) Conflicts(_ context.Context, path string) ([]string, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.conflicts[path], nil
+}
+
 // newConnectedClient drives registered tools through the in-memory transport.
-func newConnectedClient(t *testing.T, v *vault.Vault, readOnly bool) (*mcp.ClientSession, func()) {
+func newConnectedClient(t *testing.T, v *vault.Vault, readOnly bool, checker ConflictChecker) (*mcp.ClientSession, func()) {
 	t.Helper()
-	srv := New(v, readOnly)
+	srv := New(v, readOnly, checker)
 	client := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil)
 	st, ct := mcp.NewInMemoryTransports()
 	if _, err := srv.Connect(context.Background(), st, nil); err != nil {
@@ -61,7 +75,7 @@ func newConnectedClient(t *testing.T, v *vault.Vault, readOnly bool) (*mcp.Clien
 
 func TestWriteAndReadNoteViaTools(t *testing.T) {
 	v := newVault(t)
-	cs, done := newConnectedClient(t, v, false)
+	cs, done := newConnectedClient(t, v, false, nil)
 	defer done()
 
 	_, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
@@ -88,7 +102,7 @@ func TestSearchViaTools(t *testing.T) {
 	v := newVault(t)
 	mustWrite(t, v, "findme.md", "needle in haystack")
 	mustWrite(t, v, "other.md", "nothing")
-	cs, done := newConnectedClient(t, v, false)
+	cs, done := newConnectedClient(t, v, false, nil)
 	defer done()
 
 	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
@@ -106,7 +120,7 @@ func TestSearchViaTools(t *testing.T) {
 func TestDeleteViaTools(t *testing.T) {
 	v := newVault(t)
 	mustWrite(t, v, "gone.md", "data")
-	cs, done := newConnectedClient(t, v, false)
+	cs, done := newConnectedClient(t, v, false, nil)
 	defer done()
 
 	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
@@ -122,7 +136,7 @@ func TestDeleteViaTools(t *testing.T) {
 
 func TestAppendAndMoveViaTools(t *testing.T) {
 	v := newVault(t)
-	cs, done := newConnectedClient(t, v, false)
+	cs, done := newConnectedClient(t, v, false, nil)
 	defer done()
 
 	if _, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
@@ -149,10 +163,75 @@ func TestAppendAndMoveViaTools(t *testing.T) {
 	}
 }
 
+func TestWriteRefusesOnConflict(t *testing.T) {
+	v := newVault(t)
+	checker := fakeChecker{conflicts: map[string][]string{"x.md": {"1-aaa"}}}
+	cs, done := newConnectedClient(t, v, false, checker)
+	defer done()
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "write_note",
+		Arguments: map[string]any{"path": "x.md", "content": "hi", "overwrite": true},
+	})
+	if err != nil {
+		t.Fatalf("write_note call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("write_note should return an error result for a conflicted note")
+	}
+	if _, rerr := v.Read("x.md"); rerr == nil {
+		t.Error("conflicted note must not have been written")
+	}
+}
+
+func TestWriteProceedsWhenConflictCheckFails(t *testing.T) {
+	v := newVault(t)
+	checker := fakeChecker{err: errors.New("couch unreachable")} // fail-open
+	cs, done := newConnectedClient(t, v, false, checker)
+	defer done()
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "write_note",
+		Arguments: map[string]any{"path": "x.md", "content": "hi", "overwrite": true},
+	})
+	if err != nil {
+		t.Fatalf("write_note call: %v", err)
+	}
+	if res.IsError {
+		t.Fatal("write should proceed when the conflict check itself errors (fail-open)")
+	}
+	got, rerr := v.Read("x.md")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if got != "hi" {
+		t.Errorf("write did not land: %q", got)
+	}
+}
+
+func TestMetadataIncludesConflicts(t *testing.T) {
+	v := newVault(t)
+	mustWrite(t, v, "x.md", "data")
+	checker := fakeChecker{conflicts: map[string][]string{"x.md": {"1-aaa", "1-bbb"}}}
+	cs, done := newConnectedClient(t, v, false, checker)
+	defer done()
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "get_note_metadata",
+		Arguments: map[string]any{"path": "x.md"},
+	})
+	if err != nil {
+		t.Fatalf("get_note_metadata: %v", err)
+	}
+	if text := firstText(t, res); !strings.Contains(text, `"conflicts":["1-aaa","1-bbb"]`) {
+		t.Errorf("metadata missing conflicts: %s", text)
+	}
+}
+
 func TestReadOnlyExposesOnlyReadTools(t *testing.T) {
 	v := newVault(t)
 	mustWrite(t, v, "seed.md", "existing content")
-	cs, done := newConnectedClient(t, v, true) // read-only
+	cs, done := newConnectedClient(t, v, true, nil) // read-only
 	defer done()
 
 	// Read tools remain available.

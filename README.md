@@ -55,6 +55,13 @@ All configuration is via environment variables:
 | `MCP_ADDR`       | no       | `127.0.0.1:8765`   | HTTP listen address |
 | `MCP_API_KEY`    | no       | _(empty)_          | Bearer token; empty disables auth |
 | `READ_ONLY`      | no       | `false`            | When `true`, only the read tools are exposed |
+| `COUCHDB_URI`    | no       | —                  | CouchDB URL — enables conflict detection (see below) |
+| `COUCHDB_USER`   | no       | —                  | CouchDB user for conflict queries |
+| `COUCHDB_PASSWORD`| no      | —                  | CouchDB password for conflict queries |
+| `COUCHDB_DBNAME` | no       | —                  | CouchDB database name |
+
+(The Docker image already passes the `COUCHDB_*` values, so conflict detection
+works out of the box there.)
 
 ### Read-only mode
 
@@ -129,6 +136,25 @@ CouchDB document is not removed via CouchDB's native `_deleted`; instead its bod
 gains `"deleted": true` (with a bumped `_rev`), which is the tombstone other
 LiveSync clients use to remove the note locally. So a deleted note still appears
 in `_all_docs`, but its body carries the deletion marker.
+
+### Sync conflicts
+
+When the `COUCHDB_*` vars are set, the server detects unresolved sync conflicts
+(another LiveSync client edited the same note concurrently) by querying CouchDB
+over HTTP — no daemon pause needed. It's scoped to the note being touched:
+
+- **`get_note_metadata`** returns a `conflicts` array (the conflicting revision
+  ids; empty when there are none). Check it before editing a note you didn't
+  just create.
+- **`write_note` / `append_to_note`** refuse to edit a note that has an
+  unresolved conflict (so an agent surfaces it instead of piling on). The check
+  fails open — a transient CouchDB error lets the write through; the conflict is
+  still caught on the next metadata read.
+
+Note: a conflict caused by your own write isn't visible immediately (it
+materialises after the daemon pushes), so it surfaces on the *next* read.
+Detection relies on the CouchDB doc id being the note path; with **E2EE enabled**
+the ids are obfuscated, so conflict detection only works for non-encrypted vaults.
 
 ## Example MCP client config
 

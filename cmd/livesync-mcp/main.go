@@ -13,6 +13,7 @@ import (
 
 	"github.com/adambenhassen/obsidian-livesync-mcp/internal/auth"
 	"github.com/adambenhassen/obsidian-livesync-mcp/internal/config"
+	"github.com/adambenhassen/obsidian-livesync-mcp/internal/couch"
 	"github.com/adambenhassen/obsidian-livesync-mcp/internal/daemon"
 	"github.com/adambenhassen/obsidian-livesync-mcp/internal/mcpserver"
 	"github.com/adambenhassen/obsidian-livesync-mcp/internal/vault"
@@ -28,7 +29,12 @@ func main() {
 // per cfg.ReadOnly, behind bearer auth) plus an unauthenticated /healthz that
 // reports the sync daemon's liveness via healthy.
 func newHandler(v *vault.Vault, cfg config.Config, healthy func() bool) http.Handler {
-	srv := mcpserver.New(v, cfg.ReadOnly)
+	// Conflict detection is optional: nil checker when CouchDB isn't configured.
+	var checker mcpserver.ConflictChecker
+	if cc := couch.New(cfg.CouchURI, cfg.CouchUser, cfg.CouchPassword, cfg.CouchDBName); cc != nil {
+		checker = cc
+	}
+	srv := mcpserver.New(v, cfg.ReadOnly, checker)
 	mcpHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return srv }, nil)
 

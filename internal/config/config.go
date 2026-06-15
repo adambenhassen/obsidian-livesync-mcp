@@ -16,6 +16,13 @@ type Config struct {
 	CLIPath  string // LIVESYNC_CLI, default "livesync-cli"
 	Interval int    // LIVESYNC_INTERVAL, daemon CouchDB poll seconds; must be > 0 to sync
 	ReadOnly bool   // READ_ONLY, when true only read tools are exposed
+
+	// CouchDB connection for conflict detection (optional; empty disables it).
+	// These are the same vars the daemon's settings are seeded from.
+	CouchURI      string // COUCHDB_URI
+	CouchUser     string // COUCHDB_USER
+	CouchPassword string // COUCHDB_PASSWORD
+	CouchDBName   string // COUCHDB_DBNAME
 }
 
 func env(key, def string) string {
@@ -55,5 +62,9 @@ func Load() (Config, error) {
 		}
 		c.ReadOnly = b
 	}
+	c.CouchURI = os.Getenv("COUCHDB_URI")
+	c.CouchUser = os.Getenv("COUCHDB_USER")
+	c.CouchPassword = os.Getenv("COUCHDB_PASSWORD")
+	c.CouchDBName = os.Getenv("COUCHDB_DBNAME")
 	return c, nil
 }
