@@ -62,6 +62,8 @@ services:
       LIVESYNC_INTERVAL: "5"
       MCP_ADDR: 0.0.0.0:8765
       MCP_API_KEY: changeme
+      # Set to "true" to expose only read tools (no write/append/delete/move).
+      READ_ONLY: "false"
     ports:
       - "8765:8765"
     volumes:

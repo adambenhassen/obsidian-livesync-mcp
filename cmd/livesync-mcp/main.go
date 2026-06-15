@@ -48,7 +48,7 @@ func run() error {
 		}
 	}()
 
-	srv := mcpserver.New(v)
+	srv := mcpserver.New(v, cfg.ReadOnly)
 	mcpHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return srv }, nil)
 

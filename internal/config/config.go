@@ -15,6 +15,7 @@ type Config struct {
 	DBDir    string // LIVESYNC_DB, required
 	CLIPath  string // LIVESYNC_CLI, default "livesync-cli"
 	Interval int    // LIVESYNC_INTERVAL, daemon poll seconds; 0 = continuous
+	ReadOnly bool   // READ_ONLY, when true only read tools are exposed
 }
 
 func env(key, def string) string {
@@ -46,6 +47,13 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("LIVESYNC_INTERVAL must be an integer: %w", err)
 		}
 		c.Interval = n
+	}
+	if v := os.Getenv("READ_ONLY"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("READ_ONLY must be a boolean: %w", err)
+		}
+		c.ReadOnly = b
 	}
 	return c, nil
 }

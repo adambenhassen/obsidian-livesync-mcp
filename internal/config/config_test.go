@@ -23,6 +23,9 @@ func TestLoadDefaultsAndRequired(t *testing.T) {
 	if c.Interval != 0 {
 		t.Errorf("Interval = %d, want default 0", c.Interval)
 	}
+	if c.ReadOnly {
+		t.Errorf("ReadOnly = true, want default false")
+	}
 	if c.VaultDir != "/tmp/vault" || c.DBDir != "/tmp/db" || c.APIKey != "secret" {
 		t.Errorf("unexpected config: %+v", c)
 	}
@@ -47,6 +50,28 @@ func TestLoadInvalidIntervalErrors(t *testing.T) {
 	t.Setenv("LIVESYNC_INTERVAL", "notanumber")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for non-numeric LIVESYNC_INTERVAL")
+	}
+}
+
+func TestLoadReadOnly(t *testing.T) {
+	t.Setenv("LIVESYNC_VAULT", "/tmp/vault")
+	t.Setenv("LIVESYNC_DB", "/tmp/db")
+	t.Setenv("READ_ONLY", "true")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !c.ReadOnly {
+		t.Error("ReadOnly = false, want true")
+	}
+}
+
+func TestLoadInvalidReadOnlyErrors(t *testing.T) {
+	t.Setenv("LIVESYNC_VAULT", "/tmp/vault")
+	t.Setenv("LIVESYNC_DB", "/tmp/db")
+	t.Setenv("READ_ONLY", "maybe")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for non-boolean READ_ONLY")
 	}
 }
 

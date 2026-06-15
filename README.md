@@ -54,6 +54,14 @@ All configuration is via environment variables:
 | `LIVESYNC_CLI`   | no       | `livesync-cli`     | Path to the CLI launcher |
 | `MCP_ADDR`       | no       | `127.0.0.1:8765`   | HTTP listen address |
 | `MCP_API_KEY`    | no       | _(empty)_          | Bearer token; empty disables auth |
+| `READ_ONLY`      | no       | `false`            | When `true`, only the read tools are exposed |
+
+### Read-only mode
+
+Set `READ_ONLY=true` to expose only `list_notes`, `read_note`, `search_notes`,
+and `get_note_metadata`. The mutating tools (`write_note`, `append_to_note`,
+`delete_note`, `move_note`) are **not registered at all**, so an agent cannot
+see or call them — a hard guarantee that the vault won't be modified.
 
 ## Running
 

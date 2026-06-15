@@ -58,6 +58,7 @@ MCP_API_KEY=secret \
 | `LIVESYNC_INTERVAL`| no       | `0`              | Daemon CouchDB poll seconds. **Must be > 0 for sync to occur.** |
 | `MCP_ADDR`         | no       | `127.0.0.1:8765` | HTTP listen address |
 | `MCP_API_KEY`      | no       | _(empty)_        | Bearer token; empty disables auth |
+| `READ_ONLY`        | no       | `false`          | When `true`, only read tools are exposed (no write/append/delete/move) |
 
 ## MCP tools
 

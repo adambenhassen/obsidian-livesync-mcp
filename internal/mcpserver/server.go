@@ -21,10 +21,23 @@ func jsonText(val any) (*mcp.CallToolResult, error) {
 	return text(string(b)), nil
 }
 
-// New builds an MCP server exposing the note read/write tools backed by v.
-func New(v *vault.Vault) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "livesync-mcp", Version: "0.1.0"}, nil)
+type pathArgs struct {
+	Path string `json:"path" jsonschema:"vault-relative note path"`
+}
 
+// New builds an MCP server exposing note tools backed by v. When readOnly is
+// true, only the read tools are registered — the mutating tools (write, append,
+// delete, move) are not advertised at all, so agents cannot modify the vault.
+func New(v *vault.Vault, readOnly bool) *mcp.Server {
+	s := mcp.NewServer(&mcp.Implementation{Name: "livesync-mcp", Version: "0.1.0"}, nil)
+	registerReadTools(s, v)
+	if !readOnly {
+		registerWriteTools(s, v)
+	}
+	return s
+}
+
+func registerReadTools(s *mcp.Server, v *vault.Vault) {
 	type listArgs struct {
 		Folder    string `json:"folder,omitempty"    jsonschema:"vault-relative folder, empty for root"`
 		Recursive bool   `json:"recursive,omitempty" jsonschema:"recurse into subfolders"`
@@ -39,9 +52,6 @@ func New(v *vault.Vault) *mcp.Server {
 			return r, nil, err
 		})
 
-	type pathArgs struct {
-		Path string `json:"path" jsonschema:"vault-relative note path"`
-	}
 	mcp.AddTool(s, &mcp.Tool{Name: "read_note", Description: "Read a note's content."},
 		func(ctx context.Context, _ *mcp.CallToolRequest, a pathArgs) (*mcp.CallToolResult, any, error) {
 			body, err := v.Read(a.Path)
@@ -51,6 +61,32 @@ func New(v *vault.Vault) *mcp.Server {
 			return text(body), nil, nil
 		})
 
+	type searchArgs struct {
+		Query string `json:"query" jsonschema:"search text"`
+		Mode  string `json:"mode"  jsonschema:"\"filename\" or \"content\""`
+	}
+	mcp.AddTool(s, &mcp.Tool{Name: "search_notes", Description: "Search notes by filename or content."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a searchArgs) (*mcp.CallToolResult, any, error) {
+			notes, err := v.Search(a.Query, a.Mode)
+			if err != nil {
+				return nil, nil, err
+			}
+			r, err := jsonText(notes)
+			return r, nil, err
+		})
+
+	mcp.AddTool(s, &mcp.Tool{Name: "get_note_metadata", Description: "Get a note's metadata."},
+		func(ctx context.Context, _ *mcp.CallToolRequest, a pathArgs) (*mcp.CallToolResult, any, error) {
+			n, err := v.Metadata(a.Path)
+			if err != nil {
+				return nil, nil, err
+			}
+			r, err := jsonText(n)
+			return r, nil, err
+		})
+}
+
+func registerWriteTools(s *mcp.Server, v *vault.Vault) {
 	type writeArgs struct {
 		Path      string `json:"path"                jsonschema:"vault-relative note path"`
 		Content   string `json:"content"             jsonschema:"full note content"`
@@ -95,30 +131,4 @@ func New(v *vault.Vault) *mcp.Server {
 			}
 			return text("ok"), nil, nil
 		})
-
-	type searchArgs struct {
-		Query string `json:"query" jsonschema:"search text"`
-		Mode  string `json:"mode"  jsonschema:"\"filename\" or \"content\""`
-	}
-	mcp.AddTool(s, &mcp.Tool{Name: "search_notes", Description: "Search notes by filename or content."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, a searchArgs) (*mcp.CallToolResult, any, error) {
-			notes, err := v.Search(a.Query, a.Mode)
-			if err != nil {
-				return nil, nil, err
-			}
-			r, err := jsonText(notes)
-			return r, nil, err
-		})
-
-	mcp.AddTool(s, &mcp.Tool{Name: "get_note_metadata", Description: "Get a note's metadata."},
-		func(ctx context.Context, _ *mcp.CallToolRequest, a pathArgs) (*mcp.CallToolResult, any, error) {
-			n, err := v.Metadata(a.Path)
-			if err != nil {
-				return nil, nil, err
-			}
-			r, err := jsonText(n)
-			return r, nil, err
-		})
-
-	return s
 }
