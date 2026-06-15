@@ -110,12 +110,18 @@ func registerReadTools(s *mcp.Server, v *vault.Vault, checker ConflictChecker) {
 			if err != nil {
 				return nil, nil, err
 			}
-			out := metadataResult{Note: n, Conflicts: []string{}}
+			out := metadataResult{Note: n, Conflicts: []string{}, ConflictCheck: "disabled"}
 			if checker != nil {
 				if revs, cerr := checker.Conflicts(ctx, a.Path); cerr != nil {
+					// Don't pass off "couldn't check" as "no conflicts" — agents
+					// rely on this field to decide it's safe to edit.
 					log.Printf("conflict check for %q failed: %v", a.Path, cerr)
-				} else if len(revs) > 0 {
-					out.Conflicts = revs
+					out.ConflictCheck = "unavailable"
+				} else {
+					out.ConflictCheck = "ok"
+					if len(revs) > 0 {
+						out.Conflicts = revs
+					}
 				}
 			}
 			r, err := jsonText(out)
@@ -123,12 +129,16 @@ func registerReadTools(s *mcp.Server, v *vault.Vault, checker ConflictChecker) {
 		})
 }
 
-// metadataResult is get_note_metadata's response: the filesystem metadata plus
-// the CouchDB conflicting revision ids (empty when there are none).
+// metadataResult is get_note_metadata's response: the filesystem metadata, the
+// CouchDB conflicting revision ids (empty when there are none), and whether the
+// conflict check actually ran — "ok" (checked), "unavailable" (the check
+// errored, so `conflicts` is not authoritative), or "disabled" (no CouchDB
+// configured).
 type metadataResult struct {
 	vault.Note
 
-	Conflicts []string `json:"conflicts"`
+	Conflicts     []string `json:"conflicts"`
+	ConflictCheck string   `json:"conflictCheck"`
 }
 
 func registerWriteTools(s *mcp.Server, v *vault.Vault, checker ConflictChecker) {

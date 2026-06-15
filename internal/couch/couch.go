@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"time"
 )
@@ -30,7 +31,8 @@ type Client struct {
 }
 
 // New returns a Client, or nil if uri or db is empty (conflict detection
-// disabled — callers treat a nil Client as "no conflicts").
+// disabled). A nil *Client is safe to call — its Conflicts method returns no
+// conflicts — so callers don't have to special-case the disabled state.
 func New(uri, user, pass, db string) *Client {
 	if uri == "" || db == "" {
 		return nil
@@ -45,11 +47,17 @@ func New(uri, user, pass, db string) *Client {
 }
 
 // Conflicts returns the conflicting revision ids for the note at notePath, or an
-// empty slice when there are none (or the document does not exist yet).
+// empty slice when there are none (or the document does not exist). A nil Client
+// (conflict detection disabled) returns no conflicts without erroring.
 func (c *Client) Conflicts(ctx context.Context, notePath string) ([]string, error) {
-	// LiveSync doc _id is the lowercased vault path; escape it as a single path
-	// segment (slashes included).
-	id := strings.ReplaceAll(url.PathEscape(strings.ToLower(notePath)), "/", "%2F")
+	if c == nil {
+		return nil, nil
+	}
+	// LiveSync's doc _id is the lowercased, cleaned vault path; clean it so a
+	// non-canonical spelling (./x, sub//x) maps to the same doc the vault writes.
+	// Escape it as a single path segment (slashes as %2F; CouchDB decodes %20 and
+	// other percent-escapes back to the literal id).
+	id := strings.ReplaceAll(url.PathEscape(strings.ToLower(path.Clean(notePath))), "/", "%2F")
 	endpoint := c.base + "/" + c.db + "/" + id + "?conflicts=true"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
@@ -73,6 +81,16 @@ func (c *Client) Conflicts(ctx context.Context, notePath string) ([]string, erro
 	case http.StatusOK:
 		// fall through
 	case http.StatusNotFound:
+		// 404 is "no such document" (→ no conflict) OR "no such database" (a
+		// misconfigured COUCHDB_DBNAME). Surface the latter instead of letting a
+		// wrong db name masquerade as a perpetually conflict-free vault.
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		if derr := json.NewDecoder(resp.Body).Decode(&body); derr == nil &&
+			strings.Contains(strings.ToLower(body.Reason), "database does not exist") {
+			return nil, fmt.Errorf("couchdb database %q does not exist", c.db)
+		}
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("couchdb conflict query for %q: HTTP %d", notePath, resp.StatusCode)

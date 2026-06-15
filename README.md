@@ -155,12 +155,15 @@ When the `COUCHDB_*` vars are set, the server detects unresolved sync conflicts
 over HTTP — no daemon pause needed. It's scoped to the note being touched:
 
 - **`get_note_metadata`** returns a `conflicts` array (the conflicting revision
-  ids; empty when there are none). Check it before editing a note you didn't
-  just create.
+  ids; empty when there are none) plus a `conflictCheck` field: `"ok"` (checked),
+  `"unavailable"` (the check errored — `conflicts` is **not** authoritative), or
+  `"disabled"` (no CouchDB configured). Check it before editing a note you didn't
+  just create; treat `conflicts: []` as safe only when `conflictCheck` is `"ok"`.
 - **`write_note` / `append_to_note`** refuse to edit a note that has an
   unresolved conflict (so an agent surfaces it instead of piling on). The check
   fails open — a transient CouchDB error lets the write through; the conflict is
-  still caught on the next metadata read.
+  still caught on the next metadata read (which reports `conflictCheck:
+  "unavailable"`).
 
 Note: a conflict caused by your own write isn't visible immediately (it
 materialises after the daemon pushes), so it surfaces on the *next* read.

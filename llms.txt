@@ -95,9 +95,11 @@ absolute paths, `..` traversal, and symlinks escaping the vault are rejected.
   to match its E2EE passphrase). A mismatch syncs **0-byte files** — the daemon
   reports success but cannot resolve content chunks, so `read_note` returns "".
 - **Conflicts:** with `COUCHDB_*` set, `get_note_metadata` returns a `conflicts`
-  array and `write_note`/`append_to_note` refuse to edit a conflicted note. Check
-  `get_note_metadata` before editing a note you didn't just create. Only works
-  for non-E2EE vaults (encrypted vaults obfuscate the doc ids).
+  array plus `conflictCheck` (`ok`|`unavailable`|`disabled`), and
+  `write_note`/`append_to_note` refuse to edit a conflicted note. Before editing
+  a note you didn't just create, check `get_note_metadata` and treat
+  `conflicts: []` as safe only when `conflictCheck` is `ok`. Only works for
+  non-E2EE vaults (encrypted vaults obfuscate the doc ids).
 
 ## Verify
 

@@ -209,6 +209,32 @@ func TestWriteProceedsWhenConflictCheckFails(t *testing.T) {
 	}
 }
 
+func TestAppendRefusesOnConflict(t *testing.T) {
+	v := newVault(t)
+	mustWrite(t, v, "log.md", "line1\n")
+	checker := fakeChecker{conflicts: map[string][]string{"log.md": {"1-aaa"}}}
+	cs, done := newConnectedClient(t, v, false, checker)
+	defer done()
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "append_to_note",
+		Arguments: map[string]any{"path": "log.md", "content": "line2\n"},
+	})
+	if err != nil {
+		t.Fatalf("append_to_note call: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("append_to_note should refuse a conflicted note")
+	}
+	got, rerr := v.Read("log.md")
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if got != "line1\n" {
+		t.Errorf("conflicted note was modified by append: %q", got)
+	}
+}
+
 func TestMetadataIncludesConflicts(t *testing.T) {
 	v := newVault(t)
 	mustWrite(t, v, "x.md", "data")
@@ -223,8 +249,51 @@ func TestMetadataIncludesConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get_note_metadata: %v", err)
 	}
-	if text := firstText(t, res); !strings.Contains(text, `"conflicts":["1-aaa","1-bbb"]`) {
+	text := firstText(t, res)
+	if !strings.Contains(text, `"conflicts":["1-aaa","1-bbb"]`) {
 		t.Errorf("metadata missing conflicts: %s", text)
+	}
+	if !strings.Contains(text, `"conflictCheck":"ok"`) {
+		t.Errorf("metadata should report conflictCheck=ok: %s", text)
+	}
+}
+
+// A failed conflict check must NOT look like "no conflicts" — it reports
+// conflictCheck=unavailable so an agent doesn't treat the empty list as a green light.
+func TestMetadataReportsCheckUnavailable(t *testing.T) {
+	v := newVault(t)
+	mustWrite(t, v, "x.md", "data")
+	checker := fakeChecker{err: errors.New("couch unreachable")}
+	cs, done := newConnectedClient(t, v, false, checker)
+	defer done()
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "get_note_metadata",
+		Arguments: map[string]any{"path": "x.md"},
+	})
+	if err != nil {
+		t.Fatalf("get_note_metadata: %v", err)
+	}
+	if text := firstText(t, res); !strings.Contains(text, `"conflictCheck":"unavailable"`) {
+		t.Errorf("metadata should report conflictCheck=unavailable on error: %s", text)
+	}
+}
+
+func TestMetadataCheckDisabledWithoutChecker(t *testing.T) {
+	v := newVault(t)
+	mustWrite(t, v, "x.md", "data")
+	cs, done := newConnectedClient(t, v, false, nil)
+	defer done()
+
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "get_note_metadata",
+		Arguments: map[string]any{"path": "x.md"},
+	})
+	if err != nil {
+		t.Fatalf("get_note_metadata: %v", err)
+	}
+	if text := firstText(t, res); !strings.Contains(text, `"conflictCheck":"disabled"`) {
+		t.Errorf("metadata should report conflictCheck=disabled with no checker: %s", text)
 	}
 }
 

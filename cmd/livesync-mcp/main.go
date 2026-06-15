@@ -99,6 +99,11 @@ func run() error {
 		}
 	}()
 
+	if cfg.CouchURI != "" && cfg.CouchDBName != "" {
+		log.Printf("conflict detection enabled (couchdb db=%s)", cfg.CouchDBName)
+	} else {
+		log.Print("conflict detection disabled (COUCHDB_URI/COUCHDB_DBNAME not set)")
+	}
 	log.Printf("livesync-mcp listening on %s (MCP at /mcp)", cfg.Addr)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err

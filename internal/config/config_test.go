@@ -53,6 +53,23 @@ func TestLoadInvalidIntervalErrors(t *testing.T) {
 	}
 }
 
+func TestLoadCouchDBConnection(t *testing.T) {
+	t.Setenv("LIVESYNC_VAULT", "/tmp/vault")
+	t.Setenv("LIVESYNC_DB", "/tmp/db")
+	t.Setenv("COUCHDB_URI", "http://couch:5984")
+	t.Setenv("COUCHDB_USER", "admin")
+	t.Setenv("COUCHDB_PASSWORD", "secret")
+	t.Setenv("COUCHDB_DBNAME", "livesync")
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if c.CouchURI != "http://couch:5984" || c.CouchUser != "admin" ||
+		c.CouchPassword != "secret" || c.CouchDBName != "livesync" {
+		t.Errorf("unexpected CouchDB config: %+v", c)
+	}
+}
+
 func TestLoadReadOnly(t *testing.T) {
 	t.Setenv("LIVESYNC_VAULT", "/tmp/vault")
 	t.Setenv("LIVESYNC_DB", "/tmp/db")

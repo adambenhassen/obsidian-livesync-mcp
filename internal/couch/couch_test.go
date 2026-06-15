@@ -93,3 +93,56 @@ func TestConflictsServerErrorPropagates(t *testing.T) {
 		t.Error("expected error on HTTP 500")
 	}
 }
+
+func TestConflictsNilClientIsDisabled(t *testing.T) {
+	var c *Client // disabled
+	got, err := c.Conflicts(t.Context(), "x.md")
+	if err != nil || got != nil {
+		t.Fatalf("nil client = (%v, %v), want (nil, nil)", got, err)
+	}
+}
+
+// A 404 with "Database does not exist" is a misconfiguration, not "no conflict".
+func TestConflictsMissingDatabaseErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		writeBody(t, w, `{"error":"not_found","reason":"Database does not exist."}`)
+	}))
+	defer srv.Close()
+
+	if _, err := New(srv.URL, "", "", "wrongdb").Conflicts(t.Context(), "x.md"); err == nil {
+		t.Error("a missing database must surface an error, not look conflict-free")
+	}
+}
+
+// A 404 for a missing document is genuinely "no conflict".
+func TestConflictsMissingDocumentIsClean(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		writeBody(t, w, `{"error":"not_found","reason":"missing"}`)
+	}))
+	defer srv.Close()
+
+	got, err := New(srv.URL, "", "", "db").Conflicts(t.Context(), "x.md")
+	if err != nil || got != nil {
+		t.Fatalf("missing doc = (%v, %v), want (nil, nil)", got, err)
+	}
+}
+
+// Spaces and non-ASCII must be percent-encoded and slashes as %2F; CouchDB
+// decodes percent-escapes back to the literal _id.
+func TestConflictsEscapesSpacesAndUnicode(t *testing.T) {
+	var gotURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURI = r.RequestURI
+		writeBody(t, w, `{"_id":"x"}`)
+	}))
+	defer srv.Close()
+
+	if _, err := New(srv.URL, "", "", "db").Conflicts(t.Context(), "Daily/Plan B é.md"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "/db/daily%2Fplan%20b%20%C3%A9.md?conflicts=true"; gotURI != want {
+		t.Errorf("request uri = %q, want %q", gotURI, want)
+	}
+}
