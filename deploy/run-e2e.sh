@@ -5,5 +5,5 @@ set -e
 
 /usr/local/bin/seed-settings.sh
 
-echo "[e2e] running integration test"
-exec go test -tags integration ./test/... -run Roundtrip -v -count=1
+echo "[e2e] running integration tests"
+exec go test -tags integration ./test/... -v -count=1 -timeout 5m

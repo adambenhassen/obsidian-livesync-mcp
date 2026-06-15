@@ -2,14 +2,18 @@
   <img src="assets/header.svg" alt="obsidian-livesync-mcp" width="100%">
 </p>
 
-<p align="center">
-  <a href="https://github.com/adambenhassen/obsidian-livesync-mcp/actions/workflows/ci.yml"><img src="https://github.com/adambenhassen/obsidian-livesync-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-</p>
-
 A standalone **MCP HTTP server** (Go) that lets AI agents read and write an
 Obsidian vault synced by [Self-hosted LiveSync](https://github.com/vrtmrz/obsidian-livesync).
 It exposes the note CRUD surface (list, read, write, append, delete, move,
 search, metadata) over MCP Streamable HTTP.
+
+<p align="left">
+  <a href="https://github.com/adambenhassen/obsidian-livesync-mcp/actions/workflows/ci.yml"><img src="https://github.com/adambenhassen/obsidian-livesync-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
+> **Installing with an AI agent?** Point it at [`llms.txt`](llms.txt) — a concise,
+> agent-oriented setup guide (requirements, Docker/local install, env vars, tools,
+> and data-safety notes).
 
 ## Architecture
 

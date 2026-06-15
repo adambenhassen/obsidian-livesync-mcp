@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +17,84 @@ import (
 	"github.com/adambenhassen/obsidian-livesync-mcp/internal/daemon"
 	"github.com/adambenhassen/obsidian-livesync-mcp/internal/vault"
 )
+
+// requireIT skips a test unless the integration env is configured.
+func requireIT(t *testing.T) {
+	t.Helper()
+	if os.Getenv("LIVESYNC_IT") != "1" {
+		t.Skip("set LIVESYNC_IT=1 with a configured CLI + CouchDB to run")
+	}
+}
+
+// seedDB writes a configured .livesync/settings.json into dbDir so a daemon can
+// be started against it, pointed at the CouchDB from the COUCHDB_* env. Lets a
+// single test drive several independent instances against one CouchDB.
+func seedDB(t *testing.T, dbDir string) {
+	t.Helper()
+	cli := mustEnv(t, "LIVESYNC_CLI")
+	settings := filepath.Join(dbDir, ".livesync", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // G204: launches the configured test CLI (LIVESYNC_CLI), not user input
+	if out, err := exec.CommandContext(t.Context(), cli, "init-settings", "--force", settings).CombinedOutput(); err != nil {
+		t.Fatalf("init-settings: %v\n%s", err, out)
+	}
+	raw, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	uri := os.Getenv("COUCHDB_URI")
+	if uri == "" {
+		uri = os.Getenv("COUCHDB_URL")
+	}
+	m["couchDB_URI"] = uri
+	m["couchDB_USER"] = os.Getenv("COUCHDB_USER")
+	m["couchDB_PASSWORD"] = os.Getenv("COUCHDB_PASSWORD")
+	m["couchDB_DBNAME"] = mustEnv(t, "COUCHDB_DBNAME")
+	m["remoteType"] = ""
+	m["isConfigured"] = true
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// startDaemon starts a polling daemon for dbDir/vaultDir and registers cleanup.
+// Stop is idempotent, so callers may also Stop explicitly mid-test.
+func startDaemon(t *testing.T, dbDir, vaultDir string) *daemon.Daemon {
+	t.Helper()
+	d := daemon.New(mustEnv(t, "LIVESYNC_CLI"), dbDir, vaultDir, 5)
+	if err := d.Start(t.Context()); err != nil {
+		t.Fatalf("daemon start: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := d.Stop(); err != nil {
+			t.Logf("daemon stop: %v", err)
+		}
+	})
+	return d
+}
+
+// waitForLocalNote polls the vault until the note is readable or timeout.
+func waitForLocalNote(t *testing.T, v *vault.Vault, name string, timeout time.Duration) (string, bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if got, err := v.Read(name); err == nil {
+			return got, true
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return "", false
+}
 
 // TestWriteNoteRoundtripToCouchDB proves the end-to-end claim: a note written
 // to the vault propagates through the supervised livesync-cli daemon to the
@@ -33,9 +113,7 @@ import (
 // The remote-doc assertions assume E2EE is OFF (the compose default), so the
 // note path appears verbatim in CouchDB document ids.
 func TestWriteNoteRoundtripToCouchDB(t *testing.T) {
-	if os.Getenv("LIVESYNC_IT") != "1" {
-		t.Skip("set LIVESYNC_IT=1 with a configured CLI + CouchDB to run")
-	}
+	requireIT(t)
 	cli := mustEnv(t, "LIVESYNC_CLI")
 	dbDir := mustEnv(t, "LIVESYNC_DB")
 	couch := newCouch(t)
@@ -89,6 +167,103 @@ func TestWriteNoteRoundtripToCouchDB(t *testing.T) {
 	}
 }
 
+// TestExistingRemoteDataIsPreserved is the data-safety guarantee: pointing a
+// BRAND-NEW deployment (empty vault, fresh db) at a CouchDB that already holds a
+// populated vault must pull that data down — never treat the empty local vault
+// as authoritative and wipe the remote. This is the scenario most likely to
+// destroy a user's notes, so it is asserted explicitly.
+func TestExistingRemoteDataIsPreserved(t *testing.T) {
+	requireIT(t)
+	couch := newCouch(t)
+
+	// Instance A — create real "user data" and sync it to CouchDB.
+	dbA, vaultA := t.TempDir(), t.TempDir()
+	seedDB(t, dbA)
+	dA := startDaemon(t, dbA, vaultA)
+	time.Sleep(3 * time.Second)
+
+	vA, err := vault.New(vaultA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("preserve-%d.md", time.Now().UnixNano())
+	const body = "irreplaceable user content"
+	if err := vA.Write(name, body, true); err != nil {
+		t.Fatal(err)
+	}
+	if !couch.waitForState(t, name, stateLive, 20*time.Second) {
+		t.Fatalf("setup: note %q never reached CouchDB", name)
+	}
+	revBefore, _, _ := couch.getDoc(t, name)
+	if err := dA.Stop(); err != nil {
+		t.Fatalf("stop instance A: %v", err)
+	}
+
+	// Instance B — a fresh deployment (empty vault, new db) against the SAME
+	// CouchDB. Must pull the existing note, not destroy it.
+	dbB, vaultB := t.TempDir(), t.TempDir()
+	seedDB(t, dbB)
+	startDaemon(t, dbB, vaultB)
+
+	vB, err := vault.New(vaultB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := waitForLocalNote(t, vB, name, 25*time.Second)
+	if !ok {
+		t.Fatalf("existing note %q was NOT pulled into the fresh empty vault", name)
+	}
+	if got != body {
+		t.Fatalf("pulled content = %q, want %q", got, body)
+	}
+
+	// The remote copy must be untouched: still live, same revision (no tombstone,
+	// no rewrite by the fresh instance).
+	revAfter, deleted, found := couch.getDoc(t, name)
+	if !found || deleted {
+		t.Fatalf("remote note destroyed by fresh instance (found=%v deleted=%v)", found, deleted)
+	}
+	if revAfter != revBefore {
+		t.Fatalf("remote rev changed (%s -> %s): fresh instance rewrote existing data", revBefore, revAfter)
+	}
+}
+
+// TestRestartPreservesData verifies that stopping and restarting an instance
+// against its own db + vault keeps the data both locally and on the remote.
+func TestRestartPreservesData(t *testing.T) {
+	requireIT(t)
+	couch := newCouch(t)
+	db, vaultDir := t.TempDir(), t.TempDir()
+	seedDB(t, db)
+
+	d := startDaemon(t, db, vaultDir)
+	time.Sleep(3 * time.Second)
+	v, err := vault.New(vaultDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := fmt.Sprintf("durable-%d.md", time.Now().UnixNano())
+	if err := v.Write(name, "survives restart", true); err != nil {
+		t.Fatal(err)
+	}
+	if !couch.waitForState(t, name, stateLive, 20*time.Second) {
+		t.Fatalf("setup: note %q never synced", name)
+	}
+	if err := d.Stop(); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	// Restart against the same db + vault.
+	startDaemon(t, db, vaultDir)
+	time.Sleep(3 * time.Second)
+	if _, err := v.Read(name); err != nil {
+		t.Fatalf("note missing locally after restart: %v", err)
+	}
+	if st := couch.state(t, name); st != stateLive {
+		t.Fatalf("note state in couch after restart = %s, want live", st)
+	}
+}
+
 func mustEnv(t *testing.T, key string) string {
 	t.Helper()
 	v := os.Getenv(key)
@@ -137,9 +312,9 @@ func newCouch(t *testing.T) *couchClient {
 	}
 }
 
-// state fetches the LiveSync document at the given note path and reports whether
-// it is absent, live, or soft-deleted (body "deleted": true).
-func (c *couchClient) state(t *testing.T, notePath string) docState {
+// getDoc fetches the LiveSync document at notePath, returning its revision,
+// soft-deleted flag (body "deleted": true), and whether it exists at all.
+func (c *couchClient) getDoc(t *testing.T, notePath string) (rev string, deleted, found bool) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, c.base+"/"+c.db+"/"+notePath, nil)
 	if err != nil {
@@ -151,7 +326,7 @@ func (c *couchClient) state(t *testing.T, notePath string) docState {
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		t.Logf("couch query error: %v", err)
-		return stateAbsent
+		return "", false, false
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
@@ -159,24 +334,36 @@ func (c *couchClient) state(t *testing.T, notePath string) docState {
 		}
 	}()
 	if resp.StatusCode == http.StatusNotFound {
-		return stateAbsent
+		return "", false, false
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Logf("couch read error: %v", err)
-		return stateAbsent
+		return "", false, false
 	}
 	var doc struct {
-		Deleted bool `json:"deleted"`
+		Rev     string `json:"_rev"`
+		Deleted bool   `json:"deleted"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
 		t.Logf("couch decode error: %v (body=%s)", err, string(body))
+		return "", false, false
+	}
+	return doc.Rev, doc.Deleted, true
+}
+
+// state reports whether the note is absent, live, or soft-deleted.
+func (c *couchClient) state(t *testing.T, notePath string) docState {
+	t.Helper()
+	_, deleted, found := c.getDoc(t, notePath)
+	switch {
+	case !found:
 		return stateAbsent
-	}
-	if doc.Deleted {
+	case deleted:
 		return stateDeleted
+	default:
+		return stateLive
 	}
-	return stateLive
 }
 
 // waitForState polls until the note reaches want, returning whether it did.

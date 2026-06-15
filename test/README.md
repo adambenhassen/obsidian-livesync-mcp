@@ -1,9 +1,17 @@
-# Integration test
+# Integration tests
 
-`integration_test.go` proves the end-to-end claim: a note written to the vault
-propagates through the supervised `livesync-cli` daemon to the remote CouchDB,
-and that **deletion** also propagates. It is gated behind the `integration`
-build tag and the `LIVESYNC_IT=1` env var, so it never runs during `go test ./...`.
+`integration_test.go` proves the end-to-end claims against a real CouchDB. Gated
+behind the `integration` build tag and `LIVESYNC_IT=1`, so they never run during
+`go test ./...`.
+
+- **`TestWriteNoteRoundtripToCouchDB`** — a written note propagates to CouchDB,
+  and a delete propagates as a soft-delete tombstone.
+- **`TestExistingRemoteDataIsPreserved`** — the data-safety guarantee: a fresh
+  instance (empty vault, new db) pointed at a CouchDB that already holds a vault
+  **pulls the data down** and leaves the remote untouched (same revision, no
+  tombstone). This is the scenario most likely to destroy a user's notes.
+- **`TestRestartPreservesData`** — stopping and restarting an instance keeps the
+  data locally and remotely.
 
 ## Easiest path — Docker Compose
 

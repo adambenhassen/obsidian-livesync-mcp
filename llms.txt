@@ -1,0 +1,99 @@
+# obsidian-livesync-mcp
+
+> A standalone MCP (Model Context Protocol) HTTP server, written in Go, that lets
+> AI agents read and write an Obsidian vault that is synced by Self-hosted
+> LiveSync. The Go server does plain-filesystem CRUD on a vault directory; a
+> supervised `livesync-cli` daemon (Node) keeps that directory continuously
+> synced with a remote CouchDB.
+
+This file is a setup guide for AI agents installing the project. Prefer the
+Docker path — it is the only one that does not require manually building
+`livesync-cli`, which is NOT published to npm.
+
+## Requirements
+
+- **Docker + Docker Compose** (recommended), OR
+- **Go 1.26+**, a from-source `livesync-cli`, and a reachable CouchDB configured
+  as a LiveSync remote.
+
+## Install & run — Docker (recommended)
+
+```bash
+git clone https://github.com/adambenhassen/obsidian-livesync-mcp
+cd obsidian-livesync-mcp
+docker compose up --build -d        # CouchDB + from-source livesync-cli + MCP server
+curl -s -H "Authorization: Bearer changeme" http://localhost:8765/healthz   # expect HTTP 200
+```
+
+- MCP endpoint: `POST http://localhost:8765/mcp` (MCP Streamable HTTP).
+- Auth: `Authorization: Bearer changeme` — change `MCP_API_KEY` in `docker-compose.yml`.
+- CouchDB credentials/db are set in `docker-compose.yml` (`admin`/`password`, db `livesync`).
+
+## Install & run — local (advanced)
+
+1. Build `livesync-cli` from https://github.com/vrtmrz/obsidian-livesync:
+   `git submodule update --init --recursive`, `npm install`,
+   `cd src/apps/cli && npm run build` (launcher = `node dist/index.cjs`).
+2. Prepare a database dir whose `.livesync/settings.json` is configured for your
+   CouchDB (`couchDB_URI`, `couchDB_USER`, `couchDB_PASSWORD`, `couchDB_DBNAME`,
+   `isConfigured: true`).
+3. Run:
+
+```bash
+LIVESYNC_VAULT=/path/to/vault \
+LIVESYNC_DB=/path/to/db \
+LIVESYNC_CLI=/path/to/livesync-cli \
+LIVESYNC_INTERVAL=5 \
+MCP_API_KEY=secret \
+  go run ./cmd/livesync-mcp
+```
+
+## Configuration (environment variables)
+
+| Variable           | Required | Default          | Notes |
+|--------------------|----------|------------------|-------|
+| `LIVESYNC_VAULT`   | yes      | —                | Vault dir of `.md` files |
+| `LIVESYNC_DB`      | yes      | —                | livesync-cli database dir (single-process) |
+| `LIVESYNC_CLI`     | no       | `livesync-cli`   | Path to the CLI launcher |
+| `LIVESYNC_INTERVAL`| no       | `0`              | Daemon CouchDB poll seconds. **Must be > 0 for sync to occur.** |
+| `MCP_ADDR`         | no       | `127.0.0.1:8765` | HTTP listen address |
+| `MCP_API_KEY`      | no       | _(empty)_        | Bearer token; empty disables auth |
+
+## MCP tools
+
+`list_notes(folder?, recursive?)`, `read_note(path)`,
+`write_note(path, content, overwrite?)`, `append_to_note(path, content)`,
+`delete_note(path)`, `move_note(from, to)`, `search_notes(query, mode)`,
+`get_note_metadata(path)`. Paths are vault-relative and forward-slashed;
+absolute paths, `..` traversal, and symlinks escaping the vault are rejected.
+
+## Important notes (read before deploying against real data)
+
+- `livesync-cli` is **not on npm**; it must be built from source. The Docker
+  image does this for you.
+- Sync requires `LIVESYNC_INTERVAL > 0` (the Docker image sets `5`). Without it
+  the daemon connects but does not replicate.
+- The database dir is **single-process**: never run another `livesync-cli`
+  command against `LIVESYNC_DB` while the server is running.
+- **Data safety:** pointing a fresh instance (empty vault, new db) at a CouchDB
+  that already contains a vault **pulls the existing data down** — it does not
+  delete the remote. Verified by `TestExistingRemoteDataIsPreserved` in
+  `test/integration_test.go`.
+- Deletes propagate as LiveSync **soft-delete tombstones** (the CouchDB doc body
+  gains `"deleted": true`; the doc is not removed via CouchDB native `_deleted`).
+
+## Verify
+
+- Health: `GET /healthz` → `200` when the sync daemon is up, `503` when down.
+- Full end-to-end (real CouchDB, in Docker):
+  `docker compose --profile test run --rm e2e-test`
+
+## Source layout
+
+- `cmd/livesync-mcp/` — entrypoint (config, daemon supervision, HTTP wiring).
+- `internal/vault/` — path-safe filesystem CRUD + search.
+- `internal/daemon/` — supervises `livesync-cli <db> daemon --vault <vault> --interval N`.
+- `internal/mcpserver/` — MCP tool registration.
+- `internal/auth/` — bearer-token middleware.
+- `deploy/`, `Dockerfile`, `docker-compose.yml` — the runnable stack.
+- `test/integration_test.go` — gated end-to-end tests (build tag `integration`).
