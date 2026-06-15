@@ -66,6 +66,7 @@ RUN chmod +x /usr/local/bin/livesync-cli /usr/local/bin/entrypoint.sh
 ENV LIVESYNC_CLI=livesync-cli \
     LIVESYNC_VAULT=/vault \
     LIVESYNC_DB=/db \
+    LIVESYNC_INTERVAL=5 \
     MCP_ADDR=0.0.0.0:8765
 EXPOSE 8765
 VOLUME ["/vault", "/db"]

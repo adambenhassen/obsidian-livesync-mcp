@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 )
 
 // Config holds runtime settings sourced from environment variables.
@@ -12,6 +13,7 @@ type Config struct {
 	VaultDir string // LIVESYNC_VAULT, required
 	DBDir    string // LIVESYNC_DB, required
 	CLIPath  string // LIVESYNC_CLI, default "livesync-cli"
+	Interval int    // LIVESYNC_INTERVAL, daemon poll seconds; 0 = continuous
 }
 
 func env(key, def string) string {
@@ -36,6 +38,13 @@ func Load() (Config, error) {
 	}
 	if c.DBDir == "" {
 		return Config{}, fmt.Errorf("LIVESYNC_DB is required")
+	}
+	if v := os.Getenv("LIVESYNC_INTERVAL"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("LIVESYNC_INTERVAL must be an integer: %w", err)
+		}
+		c.Interval = n
 	}
 	return c, nil
 }

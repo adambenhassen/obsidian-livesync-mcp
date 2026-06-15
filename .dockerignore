@@ -1,0 +1,10 @@
+.git
+plans
+*.md
+!deploy
+dist
+livesync-mcp
+*.test
+cov.out
+.testvault
+.testdb

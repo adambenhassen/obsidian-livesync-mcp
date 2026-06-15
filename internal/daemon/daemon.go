@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 )
 
@@ -18,11 +19,19 @@ type Daemon struct {
 	done  chan struct{} // closed when the watcher observes process exit
 }
 
-// New returns a Daemon configured to run the LiveSync CLI daemon.
-func New(cliPath, dbDir, vaultDir string) *Daemon {
+// New returns a Daemon configured to run the LiveSync CLI daemon. When interval
+// is > 0, the daemon polls CouchDB every interval seconds (`--interval`), which
+// is the reliable way to drive bidirectional sync: the CLI resets the liveSync
+// settings flag during its startup migration, but the CLI flag is honoured
+// regardless. interval <= 0 omits the flag (continuous mode per settings).
+func New(cliPath, dbDir, vaultDir string, interval int) *Daemon {
+	args := []string{dbDir, "daemon", "--vault", vaultDir}
+	if interval > 0 {
+		args = append(args, "--interval", strconv.Itoa(interval))
+	}
 	return &Daemon{
 		bin:  cliPath,
-		args: []string{dbDir, "daemon", "--vault", vaultDir},
+		args: args,
 	}
 }
 

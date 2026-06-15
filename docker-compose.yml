@@ -57,6 +57,8 @@ services:
       COUCHDB_PASSPHRASE: ""
       LIVESYNC_VAULT: /vault
       LIVESYNC_DB: /db
+      # Daemon CouchDB poll interval (seconds) — drives bidirectional sync.
+      LIVESYNC_INTERVAL: "5"
       MCP_ADDR: 0.0.0.0:8765
       MCP_API_KEY: changeme
     ports:

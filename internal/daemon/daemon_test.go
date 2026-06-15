@@ -6,9 +6,37 @@ import (
 	"time"
 )
 
+func TestNewArgsWithoutInterval(t *testing.T) {
+	d := New("livesync-cli", "/db", "/vault", 0)
+	want := []string{"/db", "daemon", "--vault", "/vault"}
+	if !equalArgs(d.args, want) {
+		t.Errorf("args = %v, want %v", d.args, want)
+	}
+}
+
+func TestNewArgsWithInterval(t *testing.T) {
+	d := New("livesync-cli", "/db", "/vault", 5)
+	want := []string{"/db", "daemon", "--vault", "/vault", "--interval", "5"}
+	if !equalArgs(d.args, want) {
+		t.Errorf("args = %v, want %v", d.args, want)
+	}
+}
+
+func equalArgs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestStartRunsCommandAndReportsHealthy(t *testing.T) {
 	// Use a long-lived fake command instead of the real CLI.
-	d := New("sleep", "/tmp/db", "/tmp/vault")
+	d := New("sleep", "/tmp/db", "/tmp/vault", 0)
 	d.args = []string{"5"} // override: `sleep 5` instead of CLI args
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -32,7 +60,7 @@ func TestStartRunsCommandAndReportsHealthy(t *testing.T) {
 func TestStopAfterProcessAlreadyExited(t *testing.T) {
 	// Process exits on its own; Stop() must still return nil (treating the
 	// "already finished" Kill error as non-fatal) and not hang on <-done.
-	d := New("true", "/tmp/db", "/tmp/vault")
+	d := New("true", "/tmp/db", "/tmp/vault", 0)
 	d.args = []string{}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -54,7 +82,7 @@ func TestStopAfterProcessAlreadyExited(t *testing.T) {
 }
 
 func TestStartFailsForMissingBinary(t *testing.T) {
-	d := New("definitely-not-a-real-binary-xyz", "/tmp/db", "/tmp/vault")
+	d := New("definitely-not-a-real-binary-xyz", "/tmp/db", "/tmp/vault", 0)
 	if err := d.Start(context.Background()); err == nil {
 		t.Fatal("expected error starting missing binary")
 		_ = d.Stop()

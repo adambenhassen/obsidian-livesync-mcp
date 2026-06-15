@@ -32,7 +32,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	d := daemon.New(cfg.CLIPath, cfg.DBDir, cfg.VaultDir)
+	d := daemon.New(cfg.CLIPath, cfg.DBDir, cfg.VaultDir, cfg.Interval)
 	if err := d.Start(ctx); err != nil {
 		log.Fatalf("failed to start livesync-cli daemon: %v", err)
 	}
