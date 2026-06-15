@@ -75,6 +75,19 @@ curl -s -H "Authorization: Bearer changeme" http://localhost:8765/healthz
 This builds `livesync-cli` from source inside the image, stands up CouchDB,
 seeds the sync database, and starts the MCP server on `:8765`.
 
+### Prebuilt image (GHCR)
+
+Each version tag publishes a server image to the GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/adambenhassen/obsidian-livesync-mcp:latest
+```
+
+Bring your own CouchDB and a seeded db dir, then pass the env vars (see
+Configuration). To make `docker-compose.yml` use the published image instead of
+building from source, add `image: ghcr.io/adambenhassen/obsidian-livesync-mcp:latest`
+to the `livesync-mcp` service.
+
 ### Locally (you supply the CLI + a configured db dir)
 
 ```bash
