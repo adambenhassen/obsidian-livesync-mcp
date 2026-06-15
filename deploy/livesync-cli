@@ -1,0 +1,7 @@
+#!/bin/sh
+# Thin launcher for the bundled Self-hosted LiveSync CLI.
+#
+# Unlike the upstream docker-entrypoint wrapper, this does NOT inject a
+# database-path: the Go supervisor (internal/daemon) passes every argument
+# explicitly, e.g. `livesync-cli <db> daemon --vault <vault>`.
+exec node /app/dist/index.cjs "$@"

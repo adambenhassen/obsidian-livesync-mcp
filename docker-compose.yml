@@ -1,0 +1,71 @@
+# End-to-end stack for livesync-mcp:
+#   couchdb       — the remote sync target
+#   couchdb-init  — one-shot: creates system DBs + the sync DB
+#   livesync-mcp  — the Go MCP server + supervised livesync-cli daemon
+#
+# Usage:
+#   docker compose up --build
+#   curl -s -H "Authorization: Bearer changeme" http://localhost:8765/healthz
+#
+# The integration test (test/integration_test.go) can run against this stack;
+# see test/README.md.
+
+services:
+  couchdb:
+    image: couchdb:3.3.3
+    environment:
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: password
+    ports:
+      - "5984:5984"
+    volumes:
+      - couchdb-data:/opt/couchdb/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-u", "admin:password", "http://localhost:5984/_up"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  couchdb-init:
+    image: curlimages/curl:8.11.1
+    depends_on:
+      couchdb:
+        condition: service_healthy
+    environment:
+      COUCHDB_URL: http://couchdb:5984
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: password
+      COUCHDB_DBNAME: livesync
+    volumes:
+      - ./deploy/couchdb-init.sh:/couchdb-init.sh:ro
+    entrypoint: ["sh", "/couchdb-init.sh"]
+    restart: "no"
+
+  livesync-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      couchdb-init:
+        condition: service_completed_successfully
+    environment:
+      COUCHDB_URI: http://couchdb:5984
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: password
+      COUCHDB_DBNAME: livesync
+      # End-to-end encryption passphrase (empty disables E2EE).
+      COUCHDB_PASSPHRASE: ""
+      LIVESYNC_VAULT: /vault
+      LIVESYNC_DB: /db
+      MCP_ADDR: 0.0.0.0:8765
+      MCP_API_KEY: changeme
+    ports:
+      - "8765:8765"
+    volumes:
+      - vault-data:/vault
+      - db-data:/db
+
+volumes:
+  couchdb-data:
+  vault-data:
+  db-data:
