@@ -25,8 +25,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git python3 make g++ ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-RUN git clone "$OLS_REPO" . \
-    && git checkout "$OLS_REF" \
+# --no-checkout + checkout -f: a plain clone normalizes line endings per the
+# repo's .gitattributes, leaving files (e.g. src/apps/cli/README.md) "modified"
+# in the work tree, which makes a subsequent `git checkout <ref>` abort. Skip
+# the initial checkout and force-populate the work tree at the pinned ref.
+RUN git clone --no-checkout "$OLS_REPO" . \
+    && git checkout -f "$OLS_REF" \
     && git submodule update --init --recursive
 RUN npm install
 RUN cd src/apps/cli && npm run build
