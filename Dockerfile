@@ -101,11 +101,16 @@ COPY deploy/seed-settings.sh /usr/local/bin/seed-settings.sh
 COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/livesync-cli /usr/local/bin/seed-settings.sh /usr/local/bin/entrypoint.sh
 
+# NODE_OPTIONS caps the livesync-cli daemon's V8 heap: the long-running Node
+# process otherwise grows unbounded over time (default heap limit is ~4 GB).
+# With the cap, V8 GCs under pressure instead of inflating. Override at runtime
+# (-e NODE_OPTIONS=...) for very large vaults.
 ENV LIVESYNC_CLI=livesync-cli \
     LIVESYNC_VAULT=/vault \
     LIVESYNC_DB=/db \
     LIVESYNC_INTERVAL=5 \
-    MCP_ADDR=0.0.0.0:8765
+    MCP_ADDR=0.0.0.0:8765 \
+    NODE_OPTIONS=--max-old-space-size=256
 EXPOSE 8765
 VOLUME ["/vault", "/db"]
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

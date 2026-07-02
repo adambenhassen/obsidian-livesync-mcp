@@ -80,6 +80,10 @@ absolute paths, `..` traversal, and symlinks escaping the vault are rejected.
 
 - `livesync-cli` is **not on npm**; it must be built from source. The Docker
   image does this for you.
+- The Docker image caps the daemon's Node heap (`NODE_OPTIONS=--max-old-space-size=256`)
+  because the long-running daemon otherwise grows unbounded; override
+  `NODE_OPTIONS` for very large vaults. docker-compose adds `mem_limit: 1g` as a
+  hard backstop (OOM-kill + restart instead of eating the host).
 - Sync requires `LIVESYNC_INTERVAL > 0` (the Docker image sets `5`). Without it
   the daemon connects but does not replicate.
 - The database dir is **single-process**: never run another `livesync-cli`

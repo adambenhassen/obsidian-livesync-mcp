@@ -72,6 +72,10 @@ services:
     volumes:
       - vault-data:/vault
       - db-data:/db
+    # Hard memory backstop (the image also caps the daemon's Node heap via
+    # NODE_OPTIONS). If the container still inflates past this, it is
+    # OOM-killed and restarted — sync resumes instead of eating the host.
+    mem_limit: 1g
     # Self-heal: the server exits if the sync daemon dies, and /healthz reports
     # 503 when sync is down — restart the container so syncing resumes.
     restart: unless-stopped

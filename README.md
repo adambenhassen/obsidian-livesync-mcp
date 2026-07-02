@@ -94,6 +94,13 @@ curl -s -H "Authorization: Bearer changeme" http://localhost:8765/healthz
 This builds `livesync-cli` from source inside the image, stands up CouchDB,
 seeds the sync database, and starts the MCP server on `:8765`.
 
+The image caps the sync daemon's Node heap (`NODE_OPTIONS=--max-old-space-size=256`)
+so the long-running daemon doesn't grow unbounded over time — override with
+`-e NODE_OPTIONS=...` for very large vaults. Compose additionally sets
+`mem_limit: 1g` on the service as a hard backstop; combined with
+`restart: unless-stopped`, a runaway container is OOM-killed and restarted with
+sync resuming.
+
 ### Prebuilt image (GHCR)
 
 Each version tag publishes a server image to the GitHub Container Registry:
